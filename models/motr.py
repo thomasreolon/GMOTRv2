@@ -494,7 +494,16 @@ class MOTR(nn.Module):
         return [{'pred_logits': a, 'pred_boxes': b, }
                 for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
 
-    def _forward_single_image(self, samples, track_instances: Instances, gtboxes=None):
+    def _forward_single_image(self, samples, track_instances: Instances, exemplar, gtboxes=None):
+        exefeatures=[]
+        for fmap, mask in zip(self.backbone(exemplar)):
+            p = (mask.sum() / mask.numel())
+            b,c,h,w = fmap.shape
+            hc,wc = h//2,w//2
+            exefeatures.append(fmap[:,:,hc-int(p*hc):hc-int(p*hc)+2,wc-int(p*wc):wc+int(p*wc)+2].mean(dim=(2,3)))
+            exefeatures.append(fmap[:,:,hc,wc])
+        exefeatures = torch.stack(exefeatures, dim=1).view(b,-1,2,c)
+
         features, pos = self.backbone(samples)
         src, mask = features[-1].decompose()
         assert mask is not None
@@ -534,7 +543,7 @@ class MOTR(nn.Module):
             attn_mask = None
 
         hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact = \
-            self.transformer(srcs, masks, pos, query_embed, ref_pts=ref_pts,
+            self.transformer(srcs, masks, pos, query_embed, ref_pts=ref_pts, exefeatures=exefeatures,
                              mem_bank=track_instances.mem_bank, mem_bank_pad_mask=track_instances.mem_padding_mask, attn_mask=attn_mask)
 
         outputs_classes = []
