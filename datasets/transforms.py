@@ -1,4 +1,7 @@
 # ------------------------------------------------------------------------
+# Copyright (c) 2022 RIKEN. All Rights Reserved.
+# ------------------------------------------------------------------------
+# Modified from MOTRv2 (https://github.com/megvii-research/MOTRv2)
 # Copyright (c) 2022 megvii-research. All Rights Reserved.
 # ------------------------------------------------------------------------
 # Modified from Deformable DETR (https://github.com/fundamentalvision/Deformable-DETR)
@@ -8,21 +11,77 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # ------------------------------------------------------------------------
 
+
 """
 Transforms and data augmentation for both image + bbox.
 """
 import copy
 import random
 import PIL
+import numpy as np
 import cv2
+
 import torch
 import torchvision.transforms as T
 import torchvision.transforms.functional as F
-from PIL import Image, ImageDraw
+from torchvision.ops.misc import interpolate
+
 from util.box_ops import box_xyxy_to_cxcywh
-from util.misc import interpolate
-import numpy as np
-import os 
+
+
+def make_imgdataset_transforms(args, image_set):
+    normalize = MotCompose([
+        MotToTensor(),
+        MotNormalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+    scales = [608, 640, 672, 704, 736, 768, 800, 832, 864]
+
+    if image_set == 'train':
+        return MotCompose([
+            MotRandomHorizontalFlip(),
+            MotRandomResize(scales, max_size=1555),
+            MotRandomShiftExtender(args.sample_interval,args.sampler_lengths[0]),
+            MOTHSV(),
+            normalize,  # also scales from HW to [01]
+            MOTCleanGT(),
+        ])
+    else:
+        return MotCompose([
+            MotRandomShiftExtender(args.sample_interval,args.sampler_lengths[0]),
+            MotRandomResize([800], max_size=1333),
+            normalize,
+        ])
+
+
+
+def make_viddataset_transforms(args, image_set):
+
+    normalize = MotCompose([
+        MotToTensor(),
+        MotNormalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+    scales = [608, 640, 672, 704, 736, 768, 800, 832, 864, 896, 928, 960, 992]
+
+    if image_set == 'train':
+        return MotCompose([
+            MotRandomHorizontalFlip(),
+            MotRandomSelect(
+                MotRandomResize(scales, max_size=1536),
+                MotCompose([
+                    MotRandomResize([800, 1000, 1200]),
+                    FixedMotRandomCrop(800, 1200),
+                    MotRandomResize(scales, max_size=1536),
+                ])
+            ),
+            MOTHSV(),
+            normalize,
+        ])
+
+    else:
+        return MotCompose([
+            MotRandomResize([800], max_size=1333),
+            normalize,
+        ])
 
 
 
@@ -112,6 +171,53 @@ def random_shift(image, target, region, sizes):
             target[field] = target[field][keep[:n_size]]
 
     return cropped_image, target
+
+
+def random_shift_noresize(image, target, region):
+    ow, oh = image.size
+    # step 1, shift crop and re-scale image firstly
+    shifted_image = F.crop(image, *region)
+
+    padding = [
+        ow - region[1]-region[3],  # left
+        oh - region[0]-region[2], # top
+        region[1], # right
+        region[0], # bott
+    ]
+    shifted_image = F.pad(shifted_image, padding)
+
+    target = target.copy()
+
+    # translations due to padding
+    j, i = padding[0]-padding[2], padding[1]-padding[3]
+
+    fields = ["labels", "scores", "iscrowd", "obj_ids"]
+
+    if "boxes" in target:
+        boxes = target["boxes"]
+        shifted_boxes = boxes + torch.as_tensor([j, i, j, i])
+        # shifted_boxes *= torch.as_tensor([ow / w, oh / h, ow / w, oh / h])
+        target["boxes"] = shifted_boxes.reshape(-1, 4)
+        fields.append("boxes")
+
+    # remove elements for which the boxes or masks that have zero area
+    if "boxes" in target or "masks" in target:
+        # favor boxes selection when defining which elements to keep
+        # this is compatible with previous implementation
+        if "boxes" in target:
+            shifted_boxes = target['boxes'].reshape(-1, 2, 2)
+            max_size = torch.as_tensor([ow, oh], dtype=torch.float32)
+            shifted_boxes = torch.min(shifted_boxes.reshape(-1, 2, 2), max_size)
+            shifted_boxes = shifted_boxes.clamp(min=0)
+            keep = torch.all(shifted_boxes[:, 1, :] > shifted_boxes[:, 0, :]+4, dim=1)
+        else:
+            keep = target['masks'].flatten(1).any(1)
+
+        for field in fields:
+            n_size = len(target[field])
+            target[field] = target[field][keep[:n_size]]
+
+    return shifted_image, target
 
 
 def crop(image, target, region):
@@ -242,8 +348,7 @@ def pad(image, target, padding):
     if target is None:
         return padded_image, None
     target = target.copy()
-    # should we do something wrt the original size?
-    target["size"] = torch.tensor(padded_image[::-1])
+
     if "masks" in target:
         target['masks'] = torch.nn.functional.pad(target['masks'], (0, padding[0], 0, padding[1]))
     return padded_image, target
@@ -268,6 +373,33 @@ class MOTHSV:
             img_hsv[..., 2] = np.clip(img_hsv[..., 2] + hsv_augs[2], 0, 255)
 
             imgs[i] = cv2.cvtColor(img_hsv.astype(img.dtype), cv2.COLOR_HSV2RGB)  # no return needed
+        return imgs, targets
+
+
+class MOTCleanGT:
+    def __init__(self) -> None:
+        pass
+
+    def __call__(self, imgs: list, targets: list):
+        max_ = 1-1e-9
+
+        for target in targets:
+
+            bbs = target['boxes']
+            tmp = bbs[:, :2].clamp(0,max_)
+            diff = (bbs[:, :2] - tmp).abs()
+            coeff = bbs[:, 2:] / (diff+bbs[:, 2:])
+
+            bbs[:, :2] = tmp
+            bbs[:, 2:] *= coeff
+            
+            keep = ((bbs>=1).sum(-1) + (bbs<0).sum(-1)) == 0
+
+            always_keep = {'size', 'ori_img'}
+            for field in target.keys():
+                if field not in always_keep:
+                    target[field] = target[field][keep]
+
         return imgs, targets
 
 
@@ -334,9 +466,49 @@ class MotRandomShift(object):
         
         return ret_imgs, ret_targets
 
+class MotRandomShiftExtender(object):
+    def __init__(self, speed=1, num_outputs=5):
+        self.speed = speed
+        self.num_outputs = num_outputs
+
+    def __call__(self, imgs: list, targets: list):
+
+        prev_shift = (torch.rand(2)-.52) * self.speed
+        prev_shift += torch.sign(prev_shift)*self.speed/3
+        for select_i in range(self.num_outputs):
+            w, h = imgs[select_i].size
+
+            shift = torch.randn(2) * self.speed
+            shift = prev_shift*(1+.5/(select_i+1)) + shift*.5
+            xshift, yshift = shift.int().tolist()
+
+            # if too much shift, invert
+            if abs(xshift) > w/2:
+                prev_shift[0] =  (w-8)/2 /(1+.45/(select_i+2))
+                xshift = (w-8)//2
+            if abs(yshift) > h/2:
+                prev_shift[1] = (h-8)/2 /(1+.45/(select_i+2))
+                yshift = (h-8)//2
+
+
+            ymin = max(0, -yshift)
+            ymax = min(h, h - yshift)
+            xmin = max(0, -xshift)
+            xmax = min(w, w - xshift)
+
+            region = (int(ymin), int(xmin), int(ymax-ymin), int(xmax-xmin))
+            imgtarg = copy.deepcopy(imgs[0]), copy.deepcopy(targets[0])
+            new_img, new_targ = random_shift_noresize(*imgtarg, region) 
+            imgs.append(new_img)
+            targets.append(new_targ)
+                    
+            prev_shift = shift
+
+        return imgs[1:], targets[1:]
+
 
 class FixedMotRandomShift(object):
-    def __init__(self, bs=1, padding=50):
+    def __init__(self, bs=1, padding=64):
         self.bs = bs
         self.padding = padding
 
@@ -456,7 +628,11 @@ class RandomResize(object):
 
 class MotRandomResize(RandomResize):
     def __call__(self, imgs, targets):
+
+        # images too big cause CUDA OOM --> images with this number of pixels (730*1000) are still supported in a 8GB GPU
         size = random.choice(self.sizes)
+
+        # once we get the size we resize each image
         ret_imgs = []
         ret_targets = []
         for img_i, targets_i in zip(imgs, targets):

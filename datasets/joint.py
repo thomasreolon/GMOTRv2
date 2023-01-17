@@ -277,7 +277,7 @@ def build_dataset2transform(args, image_set):
 
 
 def build(image_set, args):
-    root = Path(args.mot_path)
+    root = Path(args.mot17_path)
     assert root.exists(), f'provided MOT path {root} does not exist'
     dataset2transform = build_dataset2transform(args, image_set)
     if image_set == 'train':

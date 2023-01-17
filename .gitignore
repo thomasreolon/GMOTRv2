@@ -6,3 +6,6 @@ build/
 *.egg
 *.egg-info
 *.mp4
+
+outputs
+configs/paths.args

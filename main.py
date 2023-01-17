@@ -8,13 +8,12 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # ------------------------------------------------------------------------
 
-
-
 import argparse
 import datetime
 import random
 import time
 from pathlib import Path
+import json
 
 import numpy as np
 import torch
@@ -26,16 +25,13 @@ import datasets.samplers as samplers
 from datasets import build_dataset
 from engine import train_one_epoch_mot
 from models import build_model
-
+from configs.defaults import get_args_parser
 
 
 def main(args):
     utils.init_distributed_mode(args)
-    print("git:\n  {}\n".format(utils.get_sha()))
-
     if args.frozen_weights is not None:
         assert args.masks, "Frozen training is meant for segmentation only"
-    print(args)
 
     device = torch.device(args.device)
 
@@ -50,7 +46,8 @@ def main(args):
 
     model_without_ddp = model
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print('number of params:', n_parameters)
+    print('\033[96m', json.dumps(vars(args), indent=2), '\033[0m')
+    print('Number of params:', n_parameters)
 
     dataset_train = build_dataset(image_set='train', args=args)
 
@@ -151,7 +148,7 @@ def main(args):
         if args.distributed:
             sampler_train.set_epoch(epoch)
         train_stats = train_one_epoch_mot(
-            model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm)
+            model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args.debug)
         lr_scheduler.step()
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']

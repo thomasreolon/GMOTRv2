@@ -110,6 +110,7 @@ class MSDeformAttn(nn.Module):
         self.sampling_offsets = nn.Linear(d_model, n_heads * n_levels * n_points * 2)
         self.attention_weights = nn.Linear(d_model, n_heads * n_levels * n_points)
         self.value_proj = nn.Linear(d_model, d_model)
+        self.value_proj2 = nn.Linear(d_model, d_model)
         self.output_proj = nn.Linear(d_model, d_model)
 
         self._reset_parameters()
@@ -127,6 +128,8 @@ class MSDeformAttn(nn.Module):
         constant_(self.attention_weights.bias.data, 0.)
         xavier_uniform_(self.value_proj.weight.data)
         constant_(self.value_proj.bias.data, 0.)
+        self.value_proj2.weight.data = self.value_proj.weight.data
+        constant_(self.value_proj2.bias.data, 0.)
         xavier_uniform_(self.output_proj.weight.data)
         constant_(self.output_proj.bias.data, 0.)
 
@@ -146,7 +149,10 @@ class MSDeformAttn(nn.Module):
         N, Len_in, _ = input_flatten.shape
         assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in
 
-        value = self.value_proj(input_flatten)
+        last_fmap = input_level_start_index[-1]
+        value = self.value_proj(input_flatten[:,:last_fmap])
+        value2 = self.value_proj(input_flatten[:,last_fmap:])
+        value = torch.cat((value, value2), dim=1)
         if input_padding_mask is not None:
             value.masked_fill_(input_padding_mask[..., None], float(0))
         value = value.view(N, Len_in, self.n_heads, self.d_model // self.n_heads)
@@ -185,6 +191,7 @@ class DeformableTransformer(nn.Module):
         self.new_frame_adaptor = None
         self.d_model = d_model
         self.nhead = nhead
+        self.num_decoder_layers = num_decoder_layers
         self.two_stage = two_stage
         self.two_stage_num_proposals = two_stage_num_proposals
 
@@ -246,7 +253,8 @@ class DeformableTransformer(nn.Module):
             valid_W = torch.sum(~mask_flatten_[:, 0, :, 0], 1)
 
             grid_y, grid_x = torch.meshgrid(torch.linspace(0, H_ - 1, H_, dtype=torch.float32, device=memory.device),
-                                            torch.linspace(0, W_ - 1, W_, dtype=torch.float32, device=memory.device))
+                                            torch.linspace(0, W_ - 1, W_, dtype=torch.float32, device=memory.device),
+                                            indexing='ij')
             grid = torch.cat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)], -1)
 
             scale = torch.cat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).view(N_, 1, 1, 2)
@@ -276,7 +284,7 @@ class DeformableTransformer(nn.Module):
         valid_ratio = torch.stack([valid_ratio_w, valid_ratio_h], -1)
         return valid_ratio
 
-    def forward(self, srcs, masks, pos_embeds, query_embed=None, ref_pts=None, mem_bank=None, mem_bank_pad_mask=None, attn_mask=None):
+    def forward(self, srcs, masks, pos_embeds, query_embed=None, ref_pts=None, mem_bank=None, mem_bank_pad_mask=None, attn_mask=None, exefeatures=None):
         assert self.two_stage or query_embed is not None
 
         # prepare input for encoder
@@ -390,7 +398,8 @@ class DeformableTransformerEncoder(nn.Module):
         for lvl, (H_, W_) in enumerate(spatial_shapes):
 
             ref_y, ref_x = torch.meshgrid(torch.linspace(0.5, H_ - 0.5, H_, dtype=torch.float32, device=device),
-                                          torch.linspace(0.5, W_ - 0.5, W_, dtype=torch.float32, device=device))
+                                          torch.linspace(0.5, W_ - 0.5, W_, dtype=torch.float32, device=device),
+                                            indexing='ij')
             ref_y = ref_y.reshape(-1)[None] / (valid_ratios[:, None, lvl, 1] * H_)
             ref_x = ref_x.reshape(-1)[None] / (valid_ratios[:, None, lvl, 0] * W_)
             ref = torch.stack((ref_x, ref_y), -1)
@@ -541,7 +550,7 @@ def pos2posemb(pos, num_pos_feats=64, temperature=10000):
     scale = 2 * math.pi
     pos = pos * scale
     dim_t = torch.arange(num_pos_feats, dtype=torch.float32, device=pos.device)
-    dim_t = temperature ** (2 * (dim_t // 2) / num_pos_feats)
+    dim_t = temperature ** (2 * dim_t.div(2, rounding_mode='trunc') / num_pos_feats)
     posemb = pos[..., None] / dim_t
     posemb = torch.stack((posemb[..., 0::2].sin(), posemb[..., 1::2].cos()), dim=-1).flatten(-3)
     return posemb
@@ -623,7 +632,7 @@ def build_deforamble_transformer(args):
         dropout=args.dropout,
         activation="relu",
         return_intermediate_dec=True,
-        num_feature_levels=args.num_feature_levels,
+        num_feature_levels=args.num_feature_levels+1,
         dec_n_points=args.dec_n_points,
         enc_n_points=args.enc_n_points,
         two_stage=args.two_stage,

@@ -15,12 +15,10 @@ from collections import defaultdict
 import json
 import os
 from pathlib import Path
-import cv2
 import numpy as np
 import torch
 import torch.utils.data
-import os.path as osp
-from PIL import Image, ImageDraw
+from PIL import Image
 import copy
 import datasets.transforms as T
 from models.structures import Instances
@@ -40,19 +38,19 @@ class DetMOTDetection:
         self.sample_mode = args.sample_mode
         self.sample_interval = args.sample_interval
         self.video_dict = {}
-        self.mot_path = args.mot_path
+        self.data_path = args.dance_path
 
         self.labels_full = defaultdict(lambda : defaultdict(list))
         def add_mot_folder(split_dir):
             print("Adding", split_dir)
-            for vid in os.listdir(os.path.join(self.mot_path, split_dir)):
+            for vid in os.listdir(os.path.join(self.data_path, split_dir)):
                 if 'seqmap' == vid:
                     continue
                 vid = os.path.join(split_dir, vid)
                 if 'DPM' in vid or 'FRCNN' in vid:
                     print(f'filter {vid}')
                     continue
-                gt_path = os.path.join(self.mot_path, vid, 'gt', 'gt.txt')
+                gt_path = os.path.join(self.data_path, vid, 'gt', 'gt.txt')
                 for l in open(gt_path):
                     t, i, *xywh, mark, label = l.strip().split(',')[:8]
                     t, i, mark, label = map(int, (t, i, mark, label))
@@ -65,7 +63,7 @@ class DetMOTDetection:
                     x, y, w, h = map(float, (xywh))
                     self.labels_full[vid][t].append([x, y, w, h, i, crowd])
 
-        add_mot_folder("DanceTrack/train")
+        add_mot_folder("train")
         vid_files = list(self.labels_full.keys())
 
         self.indices = []
@@ -85,7 +83,7 @@ class DetMOTDetection:
         self.period_idx = 0
 
         # crowdhuman
-        self.ch_dir = Path(args.mot_path) / 'crowdhuman'
+        self.ch_dir = Path(args.dance_path) / 'crowdhuman'
         self.ch_indices = []
         if args.append_crowd:
             for line in open(self.ch_dir / f"annotation_trainval.odgt"):
@@ -93,10 +91,10 @@ class DetMOTDetection:
                 boxes = [ann['fbox'] for ann in datum['gtboxes'] if not is_crowd(ann)]
                 self.ch_indices.append((datum['ID'], boxes))
         # self.ch_indices = self.ch_indices + self.ch_indices
-        print(f"Found {len(self.ch_indices)} images")
+        print(f"Found {len(self.ch_indices)} crowd images")
 
         if args.det_db:
-            with open(os.path.join(args.mot_path, args.det_db)) as f:
+            with open(os.path.join(args.dance_path, args.det_db)) as f:
                 self.det_db = json.load(f)
         else:
             self.det_db = defaultdict(list)
@@ -159,7 +157,7 @@ class DetMOTDetection:
         return rs([img], [target])
 
     def _pre_single_frame(self, vid, idx: int):
-        img_path = os.path.join(self.mot_path, vid, 'img1', f'{idx:08d}.jpg')
+        img_path = os.path.join(self.data_path, vid, 'img1', f'{idx:08d}.jpg')
         img = Image.open(img_path)
         targets = {}
         w, h = img._size
@@ -182,7 +180,8 @@ class DetMOTDetection:
             targets['labels'].append(0)
             targets['obj_ids'].append(id + obj_idx_offset)
             targets['scores'].append(1.)
-        txt_key = os.path.join(vid, 'img1', f'{idx:08d}.txt')
+        ds = self.data_path.split('/')[-1]
+        txt_key = os.path.join(ds, vid, 'img1', f'{idx:08d}.txt')
         for line in self.det_db[txt_key]:
             *box, s = map(float, line.split(','))
             targets['boxes'].append(box)
@@ -296,7 +295,7 @@ def build_transform(args, image_set):
 
 
 def build(image_set, args):
-    root = Path(args.mot_path)
+    root = Path(args.dance_path)
     assert root.exists(), f'provided MOT path {root} does not exist'
     transform = build_transform(args, image_set)
     if image_set == 'train':

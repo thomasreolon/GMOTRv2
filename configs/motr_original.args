@@ -1,9 +1,12 @@
 --meta_arch deformable_detr
---dataset_file e2e_dance
---epoch 5
 --with_box_refine
---lr_drop 4
+--num_queries 10
+--query_interaction_layer QIMv2
+
+--dataset_file e2e_fscd
+--epoch 5
 --lr 2e-4
+--lr_drop 4
 --lr_backbone 2e-5
 --batch_size 1
 --sample_mode random_interval
@@ -13,10 +16,7 @@
 --dropout 0
 --random_drop 0.1
 --fp_ratio 0.3
---query_interaction_layer QIMv2
 --query_denoise 0.05
---num_queries 10
 --use_checkpoint
 
---det_db /home/intern/Desktop/GMOTRv2/outputs/motr/det_db_motrv2.json
---pretrained /home/intern/Desktop/GMOTRv2/outputs/motr/motrv2_dancetrack.pth
+--pretrained /home/intern/Desktop/GMOTRv2/outputs/motr/r50_deformable_detr_plus_iterative_bbox_refinement-checkpoint.pth

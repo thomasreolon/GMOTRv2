@@ -18,6 +18,7 @@ import torch.nn.functional as F
 import torchvision
 from torch import nn
 from torchvision.models._utils import IntermediateLayerGetter
+from torchvision.models import resnet50, ResNet50_Weights
 from typing import Dict, List
 
 from util.misc import NestedTensor, is_main_process
@@ -99,10 +100,11 @@ class Backbone(BackboneBase):
                  train_backbone: bool,
                  return_interm_layers: bool,
                  dilation: bool,):
+        pretrained = ResNet50_Weights.IMAGENET1K_V1 if is_main_process() else None
         norm_layer = FrozenBatchNorm2d
-        backbone = getattr(torchvision.models, name)(
+        backbone = resnet50(
             replace_stride_with_dilation=[False, False, dilation],
-            pretrained=is_main_process(), norm_layer=norm_layer)
+            weights=pretrained, norm_layer=norm_layer)
         assert name not in ('resnet18', 'resnet34'), "number of channels are hard coded"
         super().__init__(backbone, train_backbone, return_interm_layers)
         if dilation:

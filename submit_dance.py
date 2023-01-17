@@ -196,7 +196,7 @@ if __name__ == '__main__':
     detr = detr.cuda()
 
     # '''for MOT17 submit''' 
-    sub_dir = 'DanceTrack/test'
+    sub_dir = 'test'
     seq_nums = os.listdir(os.path.join(args.mot_path, sub_dir))
     if 'seqmap' in seq_nums:
         seq_nums.remove('seqmap')

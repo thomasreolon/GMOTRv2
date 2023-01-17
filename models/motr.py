@@ -16,7 +16,7 @@ import math
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch import nn, Tensor
+from torch import nn
 from typing import List
 
 from util import box_ops, checkpoint
@@ -28,7 +28,7 @@ from models.structures import Instances, Boxes, pairwise_iou, matched_boxlist_io
 
 from .backbone import build_backbone
 from .matcher import build_matcher
-from .deformable_transformer_plus import build_deforamble_transformer, pos2posemb
+from .transformers import build_deforamble_transformer, pos2posemb
 from .qim import build as build_query_interaction_layer
 from .deformable_detr import SetCriterion, MLP, sigmoid_focal_loss
 
@@ -458,7 +458,7 @@ class MOTR(nn.Module):
 
     def _generate_empty_tracks(self, proposals=None):
         track_instances = Instances((1, 1))
-        num_queries, d_model = self.query_embed.weight.shape  # (300, 512)
+        _, d_model = self.query_embed.weight.shape  # (300, 512)
         device = self.query_embed.weight.device
         if proposals is None:
             track_instances.ref_pts = self.position.weight
@@ -494,20 +494,11 @@ class MOTR(nn.Module):
         return [{'pred_logits': a, 'pred_boxes': b, }
                 for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
 
-    def _forward_single_image(self, samples, track_instances: Instances, exemplar, gtboxes=None):
-        exefeatures=[]
-        for fmap, mask in zip(self.backbone(exemplar)):
-            p = (mask.sum() / mask.numel())
-            b,c,h,w = fmap.shape
-            hc,wc = h//2,w//2
-            exefeatures.append(fmap[:,:,hc-int(p*hc):hc-int(p*hc)+2,wc-int(p*wc):wc+int(p*wc)+2].mean(dim=(2,3)))
-            exefeatures.append(fmap[:,:,hc,wc])
-        exefeatures = torch.stack(exefeatures, dim=1).view(b,-1,2,c)
-
+    def _forward_single_image(self, samples, exemplar, track_instances: Instances, gtboxes=None):
+        ## Extract Features from Frame
         features, pos = self.backbone(samples)
         src, mask = features[-1].decompose()
         assert mask is not None
-
         srcs = []
         masks = []
         for l, feat in enumerate(features):
@@ -516,6 +507,7 @@ class MOTR(nn.Module):
             masks.append(mask)
             assert mask is not None
 
+        ## Additional Feats Levels
         if self.num_feature_levels > len(srcs):
             _len_srcs = len(srcs)
             for l in range(_len_srcs, self.num_feature_levels):
@@ -530,6 +522,24 @@ class MOTR(nn.Module):
                 masks.append(mask)
                 pos.append(pos_l)
 
+        ## Extract Features from Exemplar and add as feature layer
+        exefeatures=[]
+        for l, (feat, _) in enumerate(zip(*self.backbone(exemplar))):
+            esrc, mask = feat.decompose()
+            esrc = self.input_proj[l](esrc)
+            p = (mask.sum() / mask.numel())
+            b,c,h,w = esrc.shape
+            hc,wc = h//2,w//2
+            exefeatures.append(esrc[:,:,hc-int(p*hc):hc+int(p*hc)+2, wc-int(p*wc):wc+int(p*wc)+2].mean(dim=(2,3)))
+            exefeatures.append((esrc[:,:,hc-int(.5*p*hc), wc]+esrc[:,:,hc-int(.5*p*hc), wc]+esrc[:,:,hc, wc-int(.5*p*wc)]+esrc[:,:,hc, wc+int(.5*p*wc)])/4)
+            exefeatures.append(esrc[:,:,hc,wc])
+        exefeatures = torch.stack(exefeatures, dim=-1).view(b,c,-1,3)
+        srcs.append(exefeatures)
+        masks.append(torch.zeros_like(exefeatures[:,0]).bool())
+        pos.append(torch.zeros_like(exefeatures))
+
+
+        ## Add GT to guide Learning
         if gtboxes is not None:
             n_dt = len(track_instances)
             ps_tgt = self.refine_embed.weight.expand(gtboxes.size(0), -1)
@@ -542,10 +552,12 @@ class MOTR(nn.Module):
             ref_pts = track_instances.ref_pts
             attn_mask = None
 
+        ## TRANSFORMER
         hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact = \
             self.transformer(srcs, masks, pos, query_embed, ref_pts=ref_pts, exefeatures=exefeatures,
                              mem_bank=track_instances.mem_bank, mem_bank_pad_mask=track_instances.mem_padding_mask, attn_mask=attn_mask)
 
+        ## Head
         outputs_classes = []
         outputs_coords = []
         for lvl in range(hs.shape[0]):
@@ -567,6 +579,7 @@ class MOTR(nn.Module):
         outputs_class = torch.stack(outputs_classes)
         outputs_coord = torch.stack(outputs_coords)
 
+        ## Outputs Dict
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
@@ -648,13 +661,14 @@ class MOTR(nn.Module):
         if self.training:
             self.criterion.initialize_for_single_clip(data['gt_instances'])
         frames = data['imgs']  # list of Tensor.
+        exemplar = data['exemplar'][0] if 'exemplar' in data else torch.zeros(3,64,64,device=frames[0].device)
         outputs = {
             'pred_logits': [],
             'pred_boxes': [],
         }
         track_instances = None
         keys = list(self._generate_empty_tracks()._fields.keys())
-        for frame_index, (frame, gt, proposals) in enumerate(zip(frames, data['gt_instances'], data['proposals'])):
+        for frame_index, (frame, gt) in enumerate(zip(frames, data['gt_instances'])):
             frame.requires_grad = False
             is_last = frame_index == len(frames) - 1
 
@@ -668,17 +682,18 @@ class MOTR(nn.Module):
                 gtboxes = None
 
             if track_instances is None:
-                track_instances = self._generate_empty_tracks(proposals)
+                track_instances = self._generate_empty_tracks()
             else:
                 track_instances = Instances.cat([
-                    self._generate_empty_tracks(proposals),
+                    self._generate_empty_tracks(),
                     track_instances])
 
             if self.use_checkpoint and frame_index < len(frames) - 1:
-                def fn(frame, gtboxes, *args):
+                def fn(frame, exemplar, gtboxes, *args):
                     frame = nested_tensor_from_tensor_list([frame])
+                    exemplar = nested_tensor_from_tensor_list([exemplar], 64)
                     tmp = Instances((1, 1), **dict(zip(keys, args)))
-                    frame_res = self._forward_single_image(frame, tmp, gtboxes)
+                    frame_res = self._forward_single_image(frame, exemplar, tmp, gtboxes)
                     return (
                         frame_res['pred_logits'],
                         frame_res['pred_boxes'],
@@ -687,21 +702,23 @@ class MOTR(nn.Module):
                         *[aux['pred_boxes'] for aux in frame_res['aux_outputs']]
                     )
 
-                args = [frame, gtboxes] + [track_instances.get(k) for k in keys]
+                args = [frame, exemplar, gtboxes] + [track_instances.get(k) for k in keys]
                 params = tuple((p for p in self.parameters() if p.requires_grad))
                 tmp = checkpoint.CheckpointFunction.apply(fn, len(args), *args, *params)
+                n_dec = self.transformer.num_decoder_layers - 1
                 frame_res = {
                     'pred_logits': tmp[0],
                     'pred_boxes': tmp[1],
                     'hs': tmp[2],
                     'aux_outputs': [{
                         'pred_logits': tmp[3+i],
-                        'pred_boxes': tmp[3+5+i],
-                    } for i in range(5)],
+                        'pred_boxes': tmp[3+n_dec+i],
+                    } for i in range(n_dec)],
                 }
             else:
                 frame = nested_tensor_from_tensor_list([frame])
-                frame_res = self._forward_single_image(frame, track_instances, gtboxes)
+                exemplar = nested_tensor_from_tensor_list([exemplar], 64)
+                frame_res = self._forward_single_image(frame, exemplar, track_instances, gtboxes)
             frame_res = self._post_process_single_image(frame_res, track_instances, is_last)
 
             track_instances = frame_res['track_instances']
@@ -716,16 +733,7 @@ class MOTR(nn.Module):
 
 
 def build(args):
-    dataset_to_num_classes = {
-        'coco': 91,
-        'coco_panoptic': 250,
-        'e2e_mot': 1,
-        'e2e_dance': 1,
-        'e2e_joint': 1,
-        'e2e_static_mot': 1,
-    }
-    assert args.dataset_file in dataset_to_num_classes
-    num_classes = dataset_to_num_classes[args.dataset_file]
+    num_classes = 1
     device = torch.device(args.device)
 
     backbone = build_backbone(args)
@@ -757,12 +765,7 @@ def build(args):
                                     'frame_{}_ps{}_loss_bbox'.format(i, j): args.bbox_loss_coef,
                                     'frame_{}_ps{}_loss_giou'.format(i, j): args.giou_loss_coef,
                                     })
-    if args.memory_bank_type is not None and len(args.memory_bank_type) > 0:
-        memory_bank = build_memory_bank(args, d_model, hidden_dim, d_model * 2)
-        for i in range(num_frames_per_batch):
-            weight_dict.update({"frame_{}_track_loss_ce".format(i): args.cls_loss_coef})
-    else:
-        memory_bank = None
+    args.memory_bank_type = None
     losses = ['labels', 'boxes']
     criterion = ClipMatcher(num_classes, matcher=img_matcher, weight_dict=weight_dict, losses=losses)
     criterion.to(device)
@@ -778,7 +781,7 @@ def build(args):
         criterion=criterion,
         with_box_refine=args.with_box_refine,
         two_stage=args.two_stage,
-        memory_bank=memory_bank,
+        memory_bank=args.memory_bank_type,
         use_checkpoint=args.use_checkpoint,
         query_denoise=args.query_denoise,
     )

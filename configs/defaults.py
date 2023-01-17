@@ -1,8 +1,33 @@
 import argparse
-
+import numpy as np
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Deformable DETR Detector', add_help=False)
+    parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--meta_arch', default='deformable_detr', type=str)
+
+    parser.add_argument('--gmot_path', default='/data/Dataset/mot', type=str)
+    parser.add_argument('--fscd_path', default='/data/Dataset/mot', type=str)
+    parser.add_argument('--dance_path', default='/data/Dataset/mot', type=str)
+
+    parser.add_argument('--output_dir', default='./outputs/',
+                        help='path where to save, empty for no saving')
+
+
+
+
+
+    parser.add_argument('--mot20_path', default='/data/Dataset/mot', type=str)
+    parser.add_argument('--mot17_path', default='/data/Dataset/mot', type=str)
+    parser.add_argument('--crowd_path', default='/data/Dataset/mot', type=str)
+    parser.add_argument('--data_txt_path_train',
+                        default='./datasets/data_path/detmot17.train', type=str,
+                        help="path to dataset txt split")
+    parser.add_argument('--data_txt_path_val',
+                        default='./datasets/data_path/detmot17.train', type=str,
+                        help="path to dataset txt split")
+
+
     parser.add_argument('--lr', default=2e-4, type=float)
     parser.add_argument('--lr_backbone_names', default=["backbone.0"], type=str, nargs='+')
     parser.add_argument('--lr_backbone', default=2e-5, type=float)
@@ -17,7 +42,6 @@ def get_args_parser():
     parser.add_argument('--clip_max_norm', default=0.1, type=float,
                         help='gradient clipping max norm')
 
-    parser.add_argument('--meta_arch', default='deformable_detr', type=str)
 
     parser.add_argument('--sgd', action='store_true')
 
@@ -105,8 +129,6 @@ def get_args_parser():
     parser.add_argument('--coco_panoptic_path', type=str)
     parser.add_argument('--remove_difficult', action='store_true')
 
-    parser.add_argument('--output_dir', default='',
-                        help='path where to save, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=42, type=int)
@@ -120,15 +142,8 @@ def get_args_parser():
     parser.add_argument('--cache_mode', default=False, action='store_true', help='whether to cache images on memory')
 
     # end-to-end mot settings.
-    parser.add_argument('--mot_path', default='/data/Dataset/mot', type=str)
     parser.add_argument('--det_db', default='', type=str)
     parser.add_argument('--input_video', default='figs/demo.mp4', type=str)
-    parser.add_argument('--data_txt_path_train',
-                        default='./datasets/data_path/detmot17.train', type=str,
-                        help="path to dataset txt split")
-    parser.add_argument('--data_txt_path_val',
-                        default='./datasets/data_path/detmot17.train', type=str,
-                        help="path to dataset txt split")
     parser.add_argument('--img_path', default='data/valid/JPEGImages/')
 
     parser.add_argument('--query_interaction_layer', default='QIM', type=str,
