@@ -622,15 +622,16 @@ class MOTR(nn.Module):
         else:
             # each track will be assigned an unique global id by the track base.
             self.track_base.update(track_instances)
+
         if self.memory_bank is not None:
             track_instances = self.memory_bank(track_instances)
-        tmp = {}
-        tmp['track_instances'] = track_instances
+
         if not is_last:
-            out_track_instances = self.track_embed(tmp)
+            out_track_instances = self.track_embed({'track_instances':track_instances})
             frame_res['track_instances'] = out_track_instances
         else:
-            frame_res['track_instances'] = None
+            frame_res['track_instances'] = track_instances
+
         return frame_res
 
     @torch.no_grad()
@@ -648,7 +649,7 @@ class MOTR(nn.Module):
                 track_instances])
         res = self._forward_single_image(img, exemplar,
                                          track_instances=track_instances)
-        res = self._post_process_single_image(res, track_instances, False)
+        res = self._post_process_single_image(res, track_instances, True)
 
         track_instances = res['track_instances']
         track_instances = self.post_process(track_instances, ori_img_size)
