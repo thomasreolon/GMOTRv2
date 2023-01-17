@@ -101,6 +101,7 @@ class MSDeformAttn(nn.Module):
 
         self.im2col_step = 64
         self.sigmoid_attn = sigmoid_attn
+        self.proj_min = 4
 
         self.d_model = d_model
         self.n_levels = n_levels
@@ -108,9 +109,10 @@ class MSDeformAttn(nn.Module):
         self.n_points = n_points
 
         self.sampling_offsets = nn.Linear(d_model, n_heads * n_levels * n_points * 2)
-        self.attention_weights = nn.Linear(d_model, n_heads * n_levels * n_points)
+        self.attention_weights = nn.Linear(d_model, n_heads * n_levels * n_points * self.proj_min)
         self.value_proj = nn.Linear(d_model, d_model)
         self.value_proj2 = nn.Linear(d_model, d_model)
+        self.keys_proj = nn.Linear(d_model, self.proj_min)
         self.output_proj = nn.Linear(d_model, d_model)
 
         self._reset_parameters()

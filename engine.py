@@ -39,6 +39,7 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
     for data_dict in metric_logger.log_every(data_loader, print_freq, header):
         # images are a sequence of 5 frames from the same video (show GT for debugging)
         if debug_out_path:
+            # utils.get_info()
             visualize_gt(data_dict, debug_out_path)
 
         data_dict = data_dict_to_cuda(data_dict, device)

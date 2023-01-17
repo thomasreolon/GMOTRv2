@@ -16,7 +16,7 @@ def load_model(model, model_path, optimizer=None, resume=False,
                lr=None, lr_step=None):
     start_epoch = 0
     checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
-    print(f'loaded {model_path}')
+    print(f'loaded {model_path}', '\033[93m')
     state_dict = checkpoint['model']
     model_state_dict = model.state_dict()
 
@@ -49,6 +49,7 @@ def load_model(model, model_path, optimizer=None, resume=False,
             print('No param {}.'.format(k) + msg)
             state_dict[k] = model_state_dict[k]
     model.load_state_dict(state_dict, strict=False)
+    print('\033[0m', end='')
 
     # resume optimizer parameters
     if optimizer is not None and resume:

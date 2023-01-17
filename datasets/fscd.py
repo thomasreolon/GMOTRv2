@@ -48,11 +48,12 @@ class FSCDataset(Dataset):
         id2img = {imginfo['id']:imginfo['file_name']   for imginfo in d_det['images']}
 
         for boxinfo in d_det['annotations']:
-            if boxinfo['image_id'] not in id2img or len(boxinfo['bbox'])>250: 
+            if boxinfo['image_id'] not in id2img: 
                 continue
             img_path = id2img[ boxinfo['image_id'] ]
             bbs[img_path].append(boxinfo['bbox'])
-        return list(bbs.items())
+        bbs = [(k,v)for k,v in bbs.items() if len(v)<250]
+        return bbs
 
     def __len__(self):
         return len(self.detections)
