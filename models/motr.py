@@ -627,6 +627,15 @@ class MOTR(nn.Module):
             track_instances = self.memory_bank(track_instances)
 
         if not is_last:
+            # prepare queries for next frame
+            out_track_instances = self.track_embed({'track_instances':track_instances})
+            frame_res['track_instances'] = out_track_instances
+        elif not self.training:
+            ## TODO: probably in eval should not use track instances, probably predictions need to be translated to the right
+            # all queries are possibly good
+            new = track_instances.obj_idxes < 0
+            start = (torch.rand(1) * 1e10).int().item()
+            track_instances.obj_idxes[new] = torch.arange(start, start+new.sum().item(), dtype=track_instances.obj_idxes.dtype, device=track_instances.obj_idxes.device)
             out_track_instances = self.track_embed({'track_instances':track_instances})
             frame_res['track_instances'] = out_track_instances
         else:
