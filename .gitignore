@@ -9,3 +9,4 @@ build/
 
 outputs
 configs/tmp.args
+configs/_paths.args

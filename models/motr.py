@@ -553,7 +553,6 @@ class MOTR(nn.Module):
             attn_mask = None
 
 
-        print('-->', ref_pts.shape, samples.tensors.shape, exemplar.tensors.shape)
         ## TRANSFORMER
         hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact = \
             self.transformer(srcs, masks, pos, query_embed, ref_pts=ref_pts, exefeatures=exefeatures,
