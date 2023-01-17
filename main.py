@@ -144,11 +144,14 @@ def main(args):
     start_time = time.time()
 
     dataset_train.set_epoch(args.start_epoch)
+    debug_out_path = str(output_dir) + '/debug/' if args.debug else None
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             sampler_train.set_epoch(epoch)
-        train_stats = train_one_epoch_mot(
-            model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, args.debug)
+        try:
+            train_one_epoch_mot(model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, debug_out_path)
+        except KeyboardInterrupt: print('CTRL-C --> exit()') ; utils.save_on_master({ 'model': model_without_ddp.state_dict(), 'optimizer': optimizer.state_dict(), 'lr_scheduler': lr_scheduler.state_dict(), 'epoch': epoch-1, 'args': args}, output_dir / 'interrupted.pth');exit()
+    
         lr_scheduler.step()
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
@@ -164,7 +167,6 @@ def main(args):
                     'args': args,
                 }, checkpoint_path)
 
-        dataset_train.step_epoch()
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))

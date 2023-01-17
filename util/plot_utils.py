@@ -12,7 +12,7 @@
 """
 Plotting utilities to visualize training logs.
 """
-import cv2
+import cv2, os
 import torch
 import pandas as pd
 import numpy as np
@@ -157,3 +157,52 @@ def draw_ref_pts(image: Tensor, ref_pts: Tensor) -> np.ndarray:
 def image_hwc2chw(image: np.ndarray):
     image = np.ascontiguousarray(image.transpose(2, 0, 1))
     return image
+
+
+
+
+def _debug_frame(frame, out_w=400):
+    """util to make frame to writable"""
+    if len(frame.shape) == 4: frame = frame[0]
+    frame = np.ascontiguousarray(frame.clone().cpu().permute(1,2,0).numpy() [:,:,::-1]) /4+0.4 # frame in BGR
+    frame = np.uint8(255*(frame-frame.min())/(frame.max()-frame.min()))
+    h,w,_ = frame.shape
+    return cv2.resize(frame, (out_w,int(out_w*h/w)))
+
+def visualize_gt(data_dict, out_d):
+    if os.path.exists(out_d+'/gt_visualize.jpg'): return        
+    # image shape
+    num_imgs = len(data_dict['imgs']) + 1
+    num_rows = int(np.sqrt(num_imgs))
+    whites_to_add = 1 + num_imgs - num_rows*(num_rows+1)
+
+    # write bboxes on images
+    imgs = []
+    for img, gt in zip(data_dict['imgs'], data_dict['gt_instances']):
+        img = _debug_frame(img, 600)
+        H,W,_ = img.shape
+        def clean(x,X): return int(max(0,min(x, X-1)))
+        for box in gt.boxes:
+            box = (box.view(2,2) * torch.tensor([W, H], device=box.device).view(1,2)).int()
+            x1,x2 = box[0,0] - box[1,0].div(2,rounding_mode='trunc'), box[0,0] + box[1,0].div(2,rounding_mode='trunc')
+            y1,y2 = box[0,1] - box[1,1].div(2,rounding_mode='trunc'), box[0,1] + box[1,1].div(2,rounding_mode='trunc')
+            x1,x2,y1,y2 = clean(x1,W),clean(x2,W),clean(y1,H),clean(y2,H)
+            tmp = img[y1:y2, x1:x2].copy()
+            img[y1-2:y2+2, x1-2:x2+2] = (255,0,255)
+            img[y1:y2, x1:x2] = tmp
+        imgs.append(img)
+    imgs += [200*np.ones_like(img) for _ in range(whites_to_add)]
+
+    # add exemplar
+    exe_scale = int(data_dict['exemplar'][0].shape[2] * 600 / data_dict['imgs'][0].shape[2])
+    exemplar = _debug_frame(data_dict['exemplar'][0], exe_scale)
+    h1,h2 = H//3, H//3 +exemplar.shape[0]
+    w1,w2 = W//3, W//3 +exemplar.shape[1]
+    imgs[-1][h1:h2, w1:w2] = exemplar
+
+    # unique image
+    imgs = np.stack(imgs).reshape(num_rows, num_rows+1, H,W,3)
+    imgs = np.concatenate([i for i in imgs], axis=1)
+    imgs = np.concatenate([i for i in imgs], axis=1)
+
+    cv2.imwrite(out_d+'/gt_visualize.jpg', imgs)

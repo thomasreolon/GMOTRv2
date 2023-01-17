@@ -1,0 +1,18 @@
+--dataset_file e2e_fscd
+
+--lr 2e-4
+--lr_drop 4
+--lr_backbone 2e-5
+--batch_size 1
+--sample_mode random_interval
+--sample_interval 10
+--sampler_lengths 5
+--merger_dropout 0
+--dropout 0
+--random_drop 0.1
+--fp_ratio 0.3
+--query_denoise 0.05
+--use_checkpoint
+
+--with_box_refine
+--query_interaction_layer QIMv2

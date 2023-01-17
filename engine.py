@@ -21,11 +21,11 @@ import torch
 import util.misc as utils
 
 from datasets.data_prefetcher import data_dict_to_cuda
-
+from util.plot_utils import visualize_gt
 
 def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
-                    device: torch.device, epoch: int, max_norm: float = 0, debug:bool=False):
+                    device: torch.device, epoch: int, max_norm: float = 0, debug_out_path:str=False):
     model.train()
     criterion.train()
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -37,30 +37,9 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
 
     # for samples, targets in metric_logger.log_every(data_loader, print_freq, header):
     for data_dict in metric_logger.log_every(data_loader, print_freq, header):
-
         # images are a sequence of 5 frames from the same video (show GT for debugging)
-        if debug:
-            import cv2, numpy as np
-            imgs = data_dict['imgs']
-            concat = torch.cat(imgs, dim=1)
-            concat = np.ascontiguousarray(concat.clone().permute(1,2,0).numpy() [:,:,::-1])
-            # concat = (((concat * 0.22) + 0.5) * 255)
-
-            for i in range(len(imgs)):
-                for box, id in zip(data_dict['gt_instances'][i].boxes, data_dict['gt_instances'][i].obj_ids):
-                    box = (box.view(2,2) * torch.tensor([imgs[0].shape[2], imgs[0].shape[1]]).view(1,2)).int()
-                    x1,x2 = box[0,0] - box[1,0]//2, box[0,0] + box[1,0]//2
-                    y1,y2 = box[0,1] - box[1,1]//2, box[0,1] + box[1,1]//2
-                    y1, y2 = y1+imgs[0].shape[1]*i, y2+imgs[0].shape[1]*i
-                    color = ((int(id)%2)*1.1, (int(id)%10)/4, (int(id)%3)/1.3)
-                    tmp = concat[y1:y2, x1:x2].copy()
-                    concat[y1-2:y2+2, x1-2:x2+2] = color
-                    concat[y1:y2, x1:x2] = tmp
-
-            concat = cv2.resize(concat, (400, 1300))
-            cv2.imshow('batch', concat/4+ .3) 
-            cv2.waitKey(30)
-
+        if debug_out_path:
+            visualize_gt(data_dict, debug_out_path)
 
         data_dict = data_dict_to_cuda(data_dict, device)
         outputs = model(data_dict)

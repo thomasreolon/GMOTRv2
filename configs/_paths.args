@@ -1,0 +1,10 @@
+--gmot_path /home/intern/Desktop/datasets/GMOT
+--fscd_path /home/intern/Desktop/datasets/FSCD147
+--dance_path /home/intern/Desktop/datasets/DanceTrack
+--mot17_path /home/intern/Desktop/datasets/MOT17
+--mot20_path /home/intern/Desktop/datasets/MOT20
+--crowd_path /home/intern/Desktop/datasets/crowdhuman
+
+--pretrained /home/intern/Desktop/GMOTRv2/outputs/motr/r50_deformable_detr_plus_iterative_bbox_refinement-checkpoint.pth
+
+--epoch 4

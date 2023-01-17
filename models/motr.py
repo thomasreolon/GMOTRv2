@@ -28,9 +28,9 @@ from models.structures import Instances, Boxes, pairwise_iou, matched_boxlist_io
 
 from .backbone import build_backbone
 from .matcher import build_matcher
-from .transformers import build_deforamble_transformer, pos2posemb
-from .qim import build as build_query_interaction_layer
-from .deformable_detr import SetCriterion, MLP, sigmoid_focal_loss
+from .transformers import build_deforamble_transformer
+from .qim import pos2posemb, build as build_query_interaction_layer
+from .detr_loss import SetCriterion, MLP, sigmoid_focal_loss
 
 
 class ClipMatcher(SetCriterion):
@@ -552,6 +552,8 @@ class MOTR(nn.Module):
             ref_pts = track_instances.ref_pts
             attn_mask = None
 
+
+        print('-->', ref_pts.shape, samples.tensors.shape, exemplar.tensors.shape)
         ## TRANSFORMER
         hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact = \
             self.transformer(srcs, masks, pos, query_embed, ref_pts=ref_pts, exefeatures=exefeatures,
@@ -719,7 +721,7 @@ class MOTR(nn.Module):
                 frame = nested_tensor_from_tensor_list([frame])
                 exemplar = nested_tensor_from_tensor_list([exemplar], 64)
                 frame_res = self._forward_single_image(frame, exemplar, track_instances, gtboxes)
-            frame_res = self._post_process_single_image(frame_res, track_instances, is_last)
+            frame_res = self._post_process_single_image(frame_res, track_instances, is_last) # TODO do it inside of checkpoint
 
             track_instances = frame_res['track_instances']
             outputs['pred_logits'].append(frame_res['pred_logits'])

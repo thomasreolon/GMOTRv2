@@ -475,19 +475,7 @@ def interpolate(input, size=None, scale_factor=None, mode="nearest", align_corne
     This will eventually be supported natively by PyTorch, and this
     class can go away.
     """
-    if float(torchvision.__version__[:3]) < 0.7:
-        if input.numel() > 0:
-            return torch.nn.functional.interpolate(
-                input, size, scale_factor, mode, align_corners
-            )
-
-        output_shape = _output_size(2, input, size, scale_factor)
-        output_shape = list(input.shape[:-2]) + list(output_shape)
-        if float(torchvision.__version__[:3]) < 0.5:
-            return _NewEmptyTensorOp.apply(input, output_shape)
-        return _new_empty_tensor(input, output_shape)
-    else:
-        return torchvision.ops.misc.interpolate(input, size, scale_factor, mode, align_corners)
+    return torchvision.ops.misc.interpolate(input, size, scale_factor, mode, align_corners)
 
 
 def get_total_grad_norm(parameters, norm_type=2):
@@ -504,3 +492,21 @@ def inverse_sigmoid(x, eps=1e-5):
     x2 = (1 - x).clamp(min=eps)
     return torch.log(x1/x2)
 
+def get_info():
+    import gc, json
+    objs = {'cpu':0, 'params':0}
+    for obj in gc.get_objects():
+        try:
+            if isinstance(obj, torch.Tensor):
+                if str(obj.device) == 'cpu':
+                    objs['cpu'] += 1
+                else:
+                    if isinstance(obj, torch.nn.parameter.Parameter):
+                        objs['params'] += 1
+                    elif str(obj.shape) not in objs: objs[str(obj.shape)] = 1
+                    else: objs[str(obj.shape)] +=1
+        except:
+            pass
+    # print(json.dumps(objs, indent=1))
+    cpu, params = objs.pop('cpu'), objs.pop('params')
+    print(f'MEMORY: cpu:{cpu} params:{params} other:{sum(objs.values())}')
