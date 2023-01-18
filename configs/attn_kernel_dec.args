@@ -1,0 +1,7 @@
+--meta_arch deformable_attnkernel
+--num_queries 100
+
+--nheads 4
+--dec_layers 8
+--dec_n_points 16
+--enc_layers 0

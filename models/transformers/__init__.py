@@ -9,5 +9,8 @@ def build_deforamble_transformer(args):
     if args.meta_arch == 'deformable_attn':
         from .attn import  build_deforamble_transformer as build_attn
         return build_attn(args)
+    if args.meta_arch == 'deformable_attnkernel':
+        from .attn_kernel import  build_deforamble_transformer as build_attn2
+        return build_attn2(args)
     else:
         raise NotImplementedError(args.meta_arch)

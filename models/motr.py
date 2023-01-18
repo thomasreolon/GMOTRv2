@@ -453,7 +453,7 @@ class MOTR(nn.Module):
             for box_embed in self.bbox_embed:
                 nn.init.constant_(box_embed.layers[-1].bias.data[2:], 0.0)
         self.post_process = TrackerPostProcess()
-        self.track_base = RuntimeTrackerBase()
+        self.track_base = RuntimeTrackerBase(args.prob_detect, args.prob_detect*.8)
         self.criterion = criterion
         self.memory_bank = args.memory_bank_type
         self.mem_bank_len = 0 if args.memory_bank_type is None else self.memory_bank.max_his_length
@@ -498,7 +498,6 @@ class MOTR(nn.Module):
 
     def _forward_single_image(self, samples, exemplar, track_instances: Instances, gtboxes=None):
         ## Extract Features from Frame
-        print('fwd', samples.tensors.mean(dim=(2,3)))
         gtboxes=None
         features, pos = self.backbone(samples)
         src, mask = features[-1].decompose()
@@ -558,9 +557,8 @@ class MOTR(nn.Module):
 
 
         ## TRANSFORMER
-        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact = \
-            self.transformer(srcs, masks, pos, query_embed, ref_pts=ref_pts, exefeatures=exefeatures,
-                             mem_bank=track_instances.mem_bank, mem_bank_pad_mask=track_instances.mem_padding_mask, attn_mask=attn_mask)
+        hs, init_reference, inter_references, _, _ = \
+            self.transformer(srcs, masks, pos, query_embed, ref_pts=ref_pts, attn_mask=attn_mask)
 
         ## Head
         outputs_classes = []
@@ -583,9 +581,6 @@ class MOTR(nn.Module):
             outputs_coords.append(outputs_coord)
         outputs_class = torch.stack(outputs_classes)
         outputs_coord = torch.stack(outputs_coords)
-
-        print('prob', outputs_coord[-1, 0, :5])
-
 
         ## Outputs Dict
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
@@ -633,7 +628,6 @@ class MOTR(nn.Module):
         else:
             # each track will be assigned an unique global id by the track base.
             self.track_base.update(track_instances)
-        print('idxs', track_instances.obj_idxes)
 
         # improve queries (before it was skipped if it was the last)
         frame_res['track_instances'] = self.track_embed({'track_instances':track_instances})
