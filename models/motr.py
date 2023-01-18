@@ -12,12 +12,13 @@
 DETR model and criterion classes.
 """
 import copy
-import math
+import math, os
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
 from typing import List
+import cv2
 
 from util import box_ops, checkpoint
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
@@ -277,10 +278,11 @@ class ClipMatcher(SetCriterion):
                          l_dict.items()})
 
         if 'ps_outputs' in outputs:
-            for i, aux_outputs in enumerate(outputs['ps_outputs']):
+            for i, ps_outputs in enumerate(outputs['ps_outputs']):
+                if ps_outputs['pred_boxes'].numel() == 0: continue
                 ar = torch.arange(len(gt_instances_i), device=obj_idxes.device)
                 l_dict = self.get_loss('boxes',
-                                        aux_outputs,
+                                        ps_outputs,
                                         gt_instances=[gt_instances_i],
                                         indices=[(ar, ar)],
                                         num_boxes=1, )
@@ -366,8 +368,7 @@ def _get_clones(module, N):
 
 
 class MOTR(nn.Module):
-    def __init__(self, backbone, transformer, num_classes, num_queries, num_feature_levels, criterion, track_embed,
-                 aux_loss=True, with_box_refine=False, two_stage=False, memory_bank=None, use_checkpoint=False, query_denoise=0):
+    def __init__(self, backbone, transformer, track_embed, args, criterion, num_classes):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -380,22 +381,23 @@ class MOTR(nn.Module):
             two_stage: two-stage Deformable DETR
         """
         super().__init__()
-        self.num_queries = num_queries
+        self.args = args
+        self.num_queries = args.num_queries
         self.track_embed = track_embed
         self.transformer = transformer
         hidden_dim = transformer.d_model
         self.num_classes = num_classes
         self.class_embed = nn.Linear(hidden_dim, num_classes)
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
-        self.num_feature_levels = num_feature_levels
-        self.use_checkpoint = use_checkpoint
-        self.query_denoise = query_denoise
-        self.position = nn.Embedding(num_queries, 4)
+        self.num_feature_levels = args.num_feature_levels
+        self.use_checkpoint = args.use_checkpoint
+        self.query_denoise = args.query_denoise
+        self.position = nn.Embedding(args.num_queries, 4)
         self.yolox_embed = nn.Embedding(1, hidden_dim)
-        self.query_embed = nn.Embedding(num_queries, hidden_dim)
-        if query_denoise:
+        self.query_embed = nn.Embedding(args.num_queries, hidden_dim)
+        if args.query_denoise:
             self.refine_embed = nn.Embedding(1, hidden_dim)
-        if num_feature_levels > 1:
+        if args.num_feature_levels > 1:
             num_backbone_outs = len(backbone.strides)
             input_proj_list = []
             for _ in range(num_backbone_outs):
@@ -404,7 +406,7 @@ class MOTR(nn.Module):
                     nn.Conv2d(in_channels, hidden_dim, kernel_size=1),
                     nn.GroupNorm(32, hidden_dim),
                 ))
-            for _ in range(num_feature_levels - num_backbone_outs):
+            for _ in range(args.num_feature_levels - num_backbone_outs):
                 input_proj_list.append(nn.Sequential(
                     nn.Conv2d(in_channels, hidden_dim, kernel_size=3, stride=2, padding=1),
                     nn.GroupNorm(32, hidden_dim),
@@ -418,9 +420,9 @@ class MOTR(nn.Module):
                     nn.GroupNorm(32, hidden_dim),
                 )])
         self.backbone = backbone
-        self.aux_loss = aux_loss
-        self.with_box_refine = with_box_refine
-        self.two_stage = two_stage
+        self.aux_loss = args.aux_loss
+        self.with_box_refine = args.with_box_refine
+        self.two_stage = args.two_stage
 
         prior_prob = 0.01
         bias_value = -math.log((1 - prior_prob) / prior_prob)
@@ -433,8 +435,8 @@ class MOTR(nn.Module):
         nn.init.uniform_(self.position.weight.data, 0, 1)
 
         # if two-stage, the last class_embed and bbox_embed is for region proposal generation
-        num_pred = (transformer.decoder.num_layers + 1) if two_stage else transformer.decoder.num_layers
-        if with_box_refine:
+        num_pred = (transformer.decoder.num_layers + 1) if args.two_stage else transformer.decoder.num_layers
+        if args.with_box_refine:
             self.class_embed = _get_clones(self.class_embed, num_pred)
             self.bbox_embed = _get_clones(self.bbox_embed, num_pred)
             nn.init.constant_(self.bbox_embed[0].layers[-1].bias.data[2:], -2.0)
@@ -445,7 +447,7 @@ class MOTR(nn.Module):
             self.class_embed = nn.ModuleList([self.class_embed for _ in range(num_pred)])
             self.bbox_embed = nn.ModuleList([self.bbox_embed for _ in range(num_pred)])
             self.transformer.decoder.bbox_embed = None
-        if two_stage:
+        if args.two_stage:
             # hack implementation for two-stage
             self.transformer.decoder.class_embed = self.class_embed
             for box_embed in self.bbox_embed:
@@ -453,8 +455,8 @@ class MOTR(nn.Module):
         self.post_process = TrackerPostProcess()
         self.track_base = RuntimeTrackerBase()
         self.criterion = criterion
-        self.memory_bank = memory_bank
-        self.mem_bank_len = 0 if memory_bank is None else memory_bank.max_his_length
+        self.memory_bank = args.memory_bank_type
+        self.mem_bank_len = 0 if args.memory_bank_type is None else self.memory_bank.max_his_length
 
     def _generate_empty_tracks(self, proposals=None):
         track_instances = Instances((1, 1))
@@ -730,6 +732,41 @@ class MOTR(nn.Module):
             outputs['pred_logits'].append(frame_res['pred_logits'])
             outputs['pred_boxes'].append(frame_res['pred_boxes'])
 
+            if torch.rand(1) > 0.99 and self.args.debug:# and not os.path.exists(self.args.output_dir + '/debug/pred_train.jpg'):     # if true will show detections for each image (debugging)
+                os.makedirs(self.args.output_dir + '/debug', exist_ok=True)
+                dt_instances = self.post_process(track_instances, data['imgs'][0].shape[-2:])
+
+                ## NOTE: this visualizations cheats because all "non matched" BBs with an high score have been suppressed
+                # filter by score
+                keep = dt_instances.scores > .6
+                dt_instances = dt_instances[keep]
+
+                # filter by area
+                wh = dt_instances.boxes[:, 2:4] - dt_instances.boxes[:, 0:2]
+                keep =(wh[:, 0] * wh[:, 1]) > 100
+                dt_instances = dt_instances[keep]
+
+                if len(dt_instances)>0:
+                    bbox_xyxy = dt_instances.boxes.tolist()
+                    identities = dt_instances.obj_idxes.tolist()
+
+                    img = (data['imgs'][frame_index].clone().cpu().permute(1,2,0).numpy()[:,:,::-1]) /4 +.4
+                    for xyxy, track_id in zip(bbox_xyxy, identities):
+                        if track_id < 0 or track_id is None:
+                            continue
+                        x1, y1, x2, y2 = [max(0, int(a)) for a in xyxy]
+                        color = tuple([(((5+track_id*3)*4909 % p)%256) /110 for p in (3001, 1109, 2027)])
+
+                        tmp = img[ y1:y2, x1:x2].copy()
+                        img[y1-3:y2+3, x1-3:x2+3] = color
+                        img[y1:y2, x1:x2] = tmp
+                    img = (img-img.min()) / (img.max()-img.min())
+                    cv2.imwrite(self.args.output_dir + '/debug/pred_train.jpg', np.uint8(img*255))
+
+
+
+
+
         if not self.training:
             outputs['track_instances'] = track_instances
         else:
@@ -779,15 +816,8 @@ def build(args):
         backbone,
         transformer,
         track_embed=query_interaction_layer,
-        num_feature_levels=args.num_feature_levels,
-        num_classes=num_classes,
-        num_queries=args.num_queries,
-        aux_loss=args.aux_loss,
+        args=args,
         criterion=criterion,
-        with_box_refine=args.with_box_refine,
-        two_stage=args.two_stage,
-        memory_bank=args.memory_bank_type,
-        use_checkpoint=args.use_checkpoint,
-        query_denoise=args.query_denoise,
+        num_classes=num_classes
     )
     return model, criterion, postprocessors
