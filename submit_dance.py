@@ -180,6 +180,13 @@ class Detector(object):
         areas = wh[:, 0] * wh[:, 1]
         keep = areas > area_threshold
         return dt_instances[keep]
+    
+    @staticmethod
+    def fix(xyxy, shape):
+        H,W,_ = shape
+        clean = lambda x,X: max(0,min(x,X))
+        x1,y1,x2,y2 = xyxy
+        return (clean(x1,W), clean(y1,H), clean(x2,W), clean(y2,H))
 
     def detect(self, prob_threshold=0.6, area_threshold=30, vis=True, video=0):
         total_dts = 0
@@ -198,7 +205,7 @@ class Detector(object):
         lines = []
         track_instances = None
         for i, (cur_img, ori_img, exemplar) in enumerate(tqdm(loader)):
-            cur_img, ori_img, exemplar = cur_img.squeeze(0), ori_img.squeeze(0), exemplar.squeeze(0)
+            cur_img, ori_img, exemplar = cur_img.squeeze(0), ori_img.squeeze(0).numpy(), exemplar.squeeze(0)
             # predict
             cur_img, exemplar = cur_img.to(self.args.device), exemplar.to(self.args.device)
 
@@ -227,6 +234,7 @@ class Detector(object):
             for xyxy, track_id in zip(bbox_xyxy, identities):
                 if track_id < 0 or track_id is None:
                     continue
+                xyxy = self.fix(xyxy, ori_img.shape)
                 x1, y1, x2, y2 = xyxy
                 w, h = x2 - x1, y2 - y1
                 lines.append(save_format.format(frame=i + 1, id=track_id, x1=x1, y1=y1, w=w, h=h))
@@ -239,13 +247,106 @@ class Detector(object):
                     ori_img[y1:y2, x1:x2] = tmp
             if vis:
                 # ori_img = cv2.resize(ori_img, (600,350))
-                cv2.imshow('preds', ori_img.numpy())
+                cv2.imshow('preds', ori_img)
                 cv2.waitKey(40)
             
 
         with open(os.path.join(self.predict_path, f'{video}.txt'), 'w') as f:
             f.writelines(lines)
         print("totally {} dts {} occlusion dts".format(total_dts, total_occlusion_dts))
+
+    # def assign_idxs(self, dt_instances: Instances) -> Instances:
+    #     old = dt_instances.obj_idxes
+    #     to_assign = old < 0
+        
+    #     start = self.assigned
+    #     end = start + to_assign.sum().item()
+    #     dt_instances.obj_idxes[to_assign] = torch.arange(start, end, device=old.device, dtype=old.dtype)
+    #     self.assigned = end
+    #     return dt_instances
+
+    # @staticmethod
+    # def filter_dt_by_score(dt_instances: Instances, prob_threshold: float) -> Instances:
+    #     keep = dt_instances.scores > prob_threshold
+    #     keep &= dt_instances.obj_idxes >= 0
+    #     return dt_instances[keep]
+
+    # @staticmethod
+    # def filter_dt_by_area(dt_instances: Instances, area_threshold: float) -> Instances:
+    #     wh = dt_instances.boxes[:, 2:4] - dt_instances.boxes[:, 0:2]
+    #     areas = wh[:, 0] * wh[:, 1]
+    #     keep = areas > area_threshold
+    #     return dt_instances[keep]
+
+
+    # def detect(self, prob_threshold=0.6, area_threshold=30, vis=True, video=0):
+    #     total_dts = 0
+    #     total_occlusion_dts = 0
+    #     self.assigned = 0
+
+    #     # for img, ori_img, exemplar in ListImgDataset(*self.dataset[video]):
+    #     #     img = img.squeeze(0).permute(1,2,0).numpy()
+    #     #     exemplar = exemplar.squeeze(0).permute(1,2,0).numpy()
+    #     #     cv2.imshow('img', img/4+.4)
+    #     #     cv2.imshow('exemplar', exemplar/4+.4)
+    #     #     cv2.imshow('ori_img', ori_img)
+    #     #     cv2.waitKey()
+
+
+    #     loader = DataLoader(ListImgDataset(*self.dataset[video]), 1, num_workers=2)  
+    #     lines = []
+    #     track_instances = None
+    #     for i, (cur_img, ori_img, exemplar) in enumerate(tqdm(loader)):
+    #         cur_img, ori_img, exemplar = cur_img.squeeze(0), ori_img.squeeze(0).numpy(), exemplar.squeeze(0)
+    #         # predict
+    #         cur_img, exemplar = cur_img.to(self.args.device), exemplar.to(self.args.device)
+
+    #         # track_instances = None
+    #         if track_instances is not None:
+    #             track_instances.remove('boxes')
+    #             track_instances.remove('labels')
+
+    #         seq_h, seq_w, _ = ori_img.shape
+
+    #         res = self.gmot.inference_single_image([cur_img], (seq_h, seq_w), track_instances, [exemplar])
+    #         track_instances = res['track_instances']
+
+    #         # filter det instances by score.
+    #         track_instances = self.assign_idxs(track_instances)
+    #         track_instances = self.filter_dt_by_score(track_instances, prob_threshold)
+    #         track_instances = self.filter_dt_by_area(track_instances, area_threshold)
+
+    #         total_dts += len(track_instances)
+    #         if vis: print('detections:', len(track_instances), '   tot:',total_dts)
+
+    #         bbox_xyxy = track_instances.boxes.tolist()
+    #         identities = track_instances.obj_idxes.tolist()
+
+    #         save_format = '{frame},{id},{x1:.2f},{y1:.2f},{w:.2f},{h:.2f},1,-1,-1,-1\n'
+    #         for xyxy, track_id in zip(bbox_xyxy, identities):
+    #             if track_id < 0 or track_id is None:
+    #                 continue
+    #             xyxy = self.fix(xyxy, ori_img.shape)
+    #             x1, y1, x2, y2 = xyxy
+    #             w, h = x2 - x1, y2 - y1
+    #             lines.append(save_format.format(frame=i + 1, id=track_id, x1=x1, y1=y1, w=w, h=h))
+
+    #             if vis:
+    #                 color = tuple([(((5+track_id*3)*4909 % p)%256) /256 for p in (3001, 1109, 2027)])
+    #                 x1, y1, x2, y2 = [int(a*800/1080) for a in xyxy]
+    #                 tmp = ori_img[ y1:y2, x1:x2].copy()
+    #                 ori_img[y1-3:y2+3, x1-3:x2+3] = color
+    #                 ori_img[y1:y2, x1:x2] = tmp
+    #         if vis:
+    #             # ori_img = cv2.resize(ori_img, (600,350))
+    #             cv2.imshow('preds', ori_img)
+    #             cv2.waitKey(40)
+            
+
+    #     with open(os.path.join(self.predict_path, f'{video}.txt'), 'w') as f:
+    #         f.writelines(lines)
+    #     print("totally {} dts {} occlusion dts".format(total_dts, total_occlusion_dts))
+
 
 class RuntimeTrackerBase(object):
     def __init__(self, score_thresh=0.6, filter_score_thresh=0.5, miss_tolerance=10):
@@ -308,7 +409,7 @@ class RuntimeTrackerBase(object):
 #         det.detect(args.score_threshold)
 
 def load_for_eval(args):
-    ARCHITECTURE = ['backbone', 'num_feature_levels', 'num_queries', 'dec_layers', 'dec_n_points', 'dim_feedforward', 'nheads', 'hidden_dim', 'meta_arch']
+    ARCHITECTURE = ['meta_arch', 'with_box_refine', 'two_stage', 'accurate_ratio', 'num_anchors', 'backbone', 'enable_fpn',  'position_embedding', 'num_feature_levels', 'enc_layers', 'dim_feedforward', 'num_queries', 'hidden_dim', 'dec_layers',  'nheads', 'enc_n_points', 'dec_n_points', 'decoder_cross_self', 'extra_track_attn', 'loss_normalizer']
     model_path = (os.path.exists(args.resume) and args.resume) or args.output_dir + '/checkpoint.pth'
 
     print("loading... ", model_path)
