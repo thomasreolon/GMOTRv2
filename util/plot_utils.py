@@ -169,8 +169,8 @@ def _debug_frame(frame, out_w=400):
     h,w,_ = frame.shape
     return cv2.resize(frame, (out_w,int(out_w*h/w)))
 
-def visualize_gt(data_dict, out_d):
-    if os.path.exists(out_d+'/gt_visualize.jpg'): return        
+def visualize_gt(data_dict, output_dir, i=0):
+    os.makedirs(output_dir, exist_ok=True)   
     # image shape
     num_imgs = len(data_dict['imgs']) + 1
     num_rows = int(np.sqrt(num_imgs))
@@ -182,14 +182,15 @@ def visualize_gt(data_dict, out_d):
         img = _debug_frame(img, 600)
         H,W,_ = img.shape
         def clean(x,X): return int(max(0,min(x, X-1)))
-        for box in gt.boxes:
-            box = (box.view(2,2) * torch.tensor([W, H], device=box.device).view(1,2)).int()
-            x1,x2 = box[0,0] - box[1,0].div(2,rounding_mode='trunc'), box[0,0] + box[1,0].div(2,rounding_mode='trunc')
-            y1,y2 = box[0,1] - box[1,1].div(2,rounding_mode='trunc'), box[0,1] + box[1,1].div(2,rounding_mode='trunc')
-            x1,x2,y1,y2 = clean(x1,W),clean(x2,W),clean(y1,H),clean(y2,H)
-            tmp = img[y1:y2, x1:x2].copy()
-            img[y1-2:y2+2, x1-2:x2+2] = (255,0,255)
-            img[y1:y2, x1:x2] = tmp
+        if gt is not None:
+            for box in gt.boxes:
+                box = (box.view(2,2) * torch.tensor([W, H], device=box.device).view(1,2)).int()
+                x1,x2 = box[0,0] - box[1,0].div(2,rounding_mode='trunc'), box[0,0] + box[1,0].div(2,rounding_mode='trunc')
+                y1,y2 = box[0,1] - box[1,1].div(2,rounding_mode='trunc'), box[0,1] + box[1,1].div(2,rounding_mode='trunc')
+                x1,x2,y1,y2 = clean(x1,W),clean(x2,W),clean(y1,H),clean(y2,H)
+                tmp = img[y1:y2, x1:x2].copy()
+                img[y1-2:y2+2, x1-2:x2+2] = (255,0,255)
+                img[y1:y2, x1:x2] = tmp
         imgs.append(img)
     imgs += [200*np.ones_like(img) for _ in range(whites_to_add)]
 
@@ -205,4 +206,46 @@ def visualize_gt(data_dict, out_d):
     imgs = np.concatenate([i for i in imgs], axis=1)
     imgs = np.concatenate([i for i in imgs], axis=1)
 
-    cv2.imwrite(out_d+'/gt_visualize.jpg', imgs)
+    cv2.imwrite(f'{output_dir}/im{i}_gt.jpg', imgs)
+
+def visualize_pred(dt_instances, img, output_dir='outputs/', f_name=None, f_num=0, prob_tresh=0.6, save=False):
+    if f_name is None: f_name=f'fr{f_num}_'
+    os.makedirs(output_dir, exist_ok=True)
+    # filter by score
+    keep = dt_instances.scores > 0.1
+    dt_instances = dt_instances[keep]
+
+    # filter by area
+    wh = dt_instances.boxes[:, 2:4] - dt_instances.boxes[:, 0:2]
+    keep =(wh[:, 0] * wh[:, 1]) > 30
+    dt_instances = dt_instances[keep]
+
+    lines = []
+    save_format = '{frame},{id},{x1:.2f},{y1:.2f},{w:.2f},{h:.2f},1,-1,-1,-1\n'
+    if len(dt_instances)>0:
+        bbox_xyxy = dt_instances.boxes.tolist()
+        identities = dt_instances.obj_idxes.tolist()
+
+        for xyxy, track_id in zip(bbox_xyxy, identities):
+            if track_id < 0 or track_id is None:
+                continue
+            x1, y1, x2, y2 = [max(0, int(a)) for a in xyxy]
+            w, h = x2 - x1, y2 - y1
+            lines.append(save_format.format(frame=f_num + 1, id=track_id, x1=x1, y1=y1, w=w, h=h))
+            color = tuple([((5+track_id*3)*4909 % p)%256 for p in (3001, 1109, 2027)])
+
+            tmp = img[ y1:y2, x1:x2].copy()
+            img[y1-3:y2+3, x1-3:x2+3] = color
+            img[y1:y2, x1:x2] = tmp
+    if save:
+        cv2.imwrite(f'{output_dir}/{f_name}_pred.jpg', np.uint8(img))
+    return lines
+
+
+def train_visualize_pred(data_dict, outputs, output_dir, prob, batch_n):
+    lines = []
+    track_inst = outputs['post_proc'] if 'post_proc' in outputs else outputs['post_proc']
+    for i, (img, dt_inst) in enumerate(zip(data_dict['imgs'], track_inst)):
+        img = _debug_frame(img, img.shape[2])
+        lines += visualize_pred(dt_inst, img, output_dir, f'im{batch_n}_fr{i}', i, prob, True)
+    return lines

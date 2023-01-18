@@ -498,6 +498,8 @@ class MOTR(nn.Module):
 
     def _forward_single_image(self, samples, exemplar, track_instances: Instances, gtboxes=None):
         ## Extract Features from Frame
+        print('fwd', samples.tensors.mean(dim=(2,3)))
+        gtboxes=None
         features, pos = self.backbone(samples)
         src, mask = features[-1].decompose()
         assert mask is not None
@@ -582,6 +584,9 @@ class MOTR(nn.Module):
         outputs_class = torch.stack(outputs_classes)
         outputs_coord = torch.stack(outputs_coords)
 
+        print('prob', outputs_coord[-1, 0, :5])
+
+
         ## Outputs Dict
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
         if self.aux_loss:
@@ -618,30 +623,20 @@ class MOTR(nn.Module):
         track_instances.pred_boxes = frame_res['pred_boxes'][0]
         track_instances.output_embedding = frame_res['hs'][0]
         if self.training:
+            if self.args.debug:
+                dt_instances = track_instances.clone()
+                self.track_base.update(dt_instances)
+                frame_res['dt_instances'] = dt_instances[dt_instances.obj_idxes>=0]
             # the track id will be assigned by the mather.
             frame_res['track_instances'] = track_instances
             track_instances = self.criterion.match_for_single_frame(frame_res)
         else:
             # each track will be assigned an unique global id by the track base.
             self.track_base.update(track_instances)
+        print('idxs', track_instances.obj_idxes)
 
-        if self.memory_bank is not None:
-            track_instances = self.memory_bank(track_instances)
-
-        if not is_last:
-            # prepare queries for next frame
-            out_track_instances = self.track_embed({'track_instances':track_instances})
-            frame_res['track_instances'] = out_track_instances
-        elif not self.training:
-            ## TODO: probably in eval should not use track instances, probably predictions need to be translated to the right
-            # all queries are possibly good
-            new = track_instances.obj_idxes < 0
-            start = (torch.rand(1) * 1e10).int().item()
-            track_instances.obj_idxes[new] = torch.arange(start, start+new.sum().item(), dtype=track_instances.obj_idxes.dtype, device=track_instances.obj_idxes.device)
-            out_track_instances = self.track_embed({'track_instances':track_instances})
-            frame_res['track_instances'] = out_track_instances
-        else:
-            frame_res['track_instances'] = track_instances
+        # improve queries (before it was skipped if it was the last)
+        frame_res['track_instances'] = self.track_embed({'track_instances':track_instances})
 
         return frame_res
 
@@ -664,16 +659,9 @@ class MOTR(nn.Module):
 
         track_instances = res['track_instances']
         track_instances = self.post_process(track_instances, ori_img_size)
-        ret = {'track_instances': track_instances}
-        if 'ref_pts' in res:
-            ref_pts = res['ref_pts']
-            img_h, img_w = ori_img_size
-            scale_fct = torch.Tensor([img_w, img_h]).to(ref_pts)
-            ref_pts = ref_pts * scale_fct[None]
-            ret['ref_pts'] = ref_pts
-        return ret
+        return track_instances
 
-    def forward(self, data: dict):
+    def forward(self, data: dict, track_instances=None):
         if self.training:
             self.criterion.initialize_for_single_clip(data['gt_instances'])
         frames = data['imgs']  # list of Tensor.
@@ -681,14 +669,14 @@ class MOTR(nn.Module):
         outputs = {
             'pred_logits': [],
             'pred_boxes': [],
+            'post_proc': [],
         }
-        track_instances = None
         keys = list(self._generate_empty_tracks()._fields.keys())
         for frame_index, (frame, gt) in enumerate(zip(frames, data['gt_instances'])):
             frame.requires_grad = False
             is_last = frame_index == len(frames) - 1
 
-            if self.query_denoise > 0:
+            if self.query_denoise > 0 and gt is not None and self.training:
                 l_1 = l_2 = self.query_denoise
                 gtboxes = gt.boxes.clone()
                 _rs = torch.rand_like(gtboxes) * 2 - 1
@@ -741,40 +729,9 @@ class MOTR(nn.Module):
             outputs['pred_logits'].append(frame_res['pred_logits'])
             outputs['pred_boxes'].append(frame_res['pred_boxes'])
 
-            if torch.rand(1) > 0.99 and self.args.debug:# and not os.path.exists(self.args.output_dir + '/debug/pred_train.jpg'):     # if true will show detections for each image (debugging)
-                os.makedirs(self.args.output_dir + '/debug', exist_ok=True)
-                dt_instances = self.post_process(track_instances, data['imgs'][0].shape[-2:])
-
-                ## NOTE: this visualizations cheats because all "non matched" BBs with an high score have been suppressed
-                # filter by score
-                keep = dt_instances.scores > .6
-                dt_instances = dt_instances[keep]
-
-                # filter by area
-                wh = dt_instances.boxes[:, 2:4] - dt_instances.boxes[:, 0:2]
-                keep =(wh[:, 0] * wh[:, 1]) > 100
-                dt_instances = dt_instances[keep]
-
-                if len(dt_instances)>0:
-                    bbox_xyxy = dt_instances.boxes.tolist()
-                    identities = dt_instances.obj_idxes.tolist()
-
-                    img = (data['imgs'][frame_index].clone().cpu().permute(1,2,0).numpy()[:,:,::-1]) /4 +.4
-                    for xyxy, track_id in zip(bbox_xyxy, identities):
-                        if track_id < 0 or track_id is None:
-                            continue
-                        x1, y1, x2, y2 = [max(0, int(a)) for a in xyxy]
-                        color = tuple([(((5+track_id*3)*4909 % p)%256) /110 for p in (3001, 1109, 2027)])
-
-                        tmp = img[ y1:y2, x1:x2].copy()
-                        img[y1-3:y2+3, x1-3:x2+3] = color
-                        img[y1:y2, x1:x2] = tmp
-                    img = (img-img.min()) / (img.max()-img.min())
-                    cv2.imwrite(self.args.output_dir + '/debug/pred_train.jpg', np.uint8(img*255))
-
-
-
-
+            inst = frame_res['dt_instances'] if self.training else track_instances
+            dt_instances = self.post_process(inst.to('cpu'), (data['imgs'][0].shape[-2:]))
+            outputs['post_proc'].append(dt_instances)
 
         if not self.training:
             outputs['track_instances'] = track_instances

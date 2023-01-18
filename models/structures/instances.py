@@ -82,7 +82,7 @@ class Instances:
                 len(self) == data_len
             ), "Adding a field of length {} to a Instances of length {}".format(data_len, len(self))
         self._fields[name] = value
-
+    
     def has(self, name: str) -> bool:
         """
         Returns:
@@ -150,6 +150,16 @@ class Instances:
         ret = Instances(self._image_size)
         for k, v in self._fields.items():
             ret.set(k, v[item])
+        return ret
+
+    def clone(self) -> "Instances":
+        """
+        Returns:
+            A copy of the `Instances`
+        """
+        ret = Instances(self._image_size)
+        for k, v in self._fields.items():
+            ret.set(k, v.clone())
         return ret
 
     def __len__(self) -> int:

@@ -198,6 +198,31 @@ class Detector(object):
             f.writelines(lines)
         print("totally {} dts".format(len(lines)))
 
+    # def detect(self, video=0):
+    #     self.gmot.track_base.clear()
+
+    #     loader = DataLoader(ListImgDataset(*self.dataset[video]), 1, num_workers=2)
+    #     lines = []
+        # track_instances = None
+        # for i, (ori_img, cur_img, exemplar) in enumerate(tqdm(loader)):
+        #     ori_img, cur_img, exemplar = ori_img[0].numpy(), cur_img[0], exemplar[0]
+        #     if i==0: visualize_gt({'imgs':[cur_img], 'exemplar':[exemplar],'gt_instances':[None]}, self.predict_path, i=video)
+        #     # predict
+        #     cur_img, exemplar = cur_img.to(self.args.device), exemplar.to(self.args.device)
+
+        #     seq_h, seq_w, _ = ori_img.shape
+
+        #     # predict & keep > thresh
+        #     track_instances = self.gmot.inference_single_image([cur_img], (seq_h, seq_w), track_instances, [exemplar])
+
+        #     # save predictions
+        #     ori_img = (ori_img-ori_img.min())/(ori_img.max()-ori_img.min())*255
+        #     show = i%(len(loader)//5)==0 and self.args.debug
+        #     lines += visualize_pred(track_instances, ori_img, self.predict_path, f'vid{video}_fr{i}', i, self.args.prob_detect, show)            
+
+    #     with open(os.path.join(self.predict_path, f'{video}.txt'), 'w') as f:
+    #         f.writelines(lines)
+    #     print("totally {} dts".format(len(lines)))
 
 
 def load_for_eval(args):

@@ -9,11 +9,10 @@ def get_args_parser():
     parser.add_argument('--gmot_path', default='/data/Dataset/mot', type=str)
     parser.add_argument('--fscd_path', default='/data/Dataset/mot', type=str)
     parser.add_argument('--dance_path', default='/data/Dataset/mot', type=str)
+    parser.add_argument('--prob_detect', default=0.2, type=float)
 
     parser.add_argument('--output_dir', default='./outputs/',
                         help='path where to save, empty for no saving')
-
-
 
 
 

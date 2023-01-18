@@ -23,7 +23,6 @@ from util.tool import load_model
 import util.misc as utils
 import datasets.samplers as samplers
 from datasets import build_dataset
-from engine import train_one_epoch_mot
 from models import build_model
 from configs.defaults import get_args_parser
 
@@ -144,32 +143,54 @@ def main(args):
     start_time = time.time()
 
     dataset_train.set_epoch(args.start_epoch)
-    for epoch in range(args.start_epoch, args.epochs):
-        debug_out_path = f'{output_dir}/debug/{epoch}/' if args.debug else None
-        if args.distributed:
-            sampler_train.set_epoch(epoch)
-        try:
-            train_one_epoch_mot(model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, debug_out_path)
-        except KeyboardInterrupt: print('CTRL-C --> exit()') ; utils.save_on_master({ 'model': model_without_ddp.state_dict(), 'optimizer': optimizer.state_dict(), 'lr_scheduler': lr_scheduler.state_dict(), 'epoch': epoch-1, 'args': args}, output_dir / 'interrupted.pth');exit()
-    
-        lr_scheduler.step()
-        if args.output_dir:
-            checkpoint_paths = [output_dir / 'checkpoint.pth']
-            # extra checkpoint before LR drop and every 5 epochs
-            if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % args.save_period == 0 or (((args.epochs >= 100 and (epoch + 1) > 100) or args.epochs < 100) and (epoch + 1) % 5 == 0):
-                checkpoint_paths.append(output_dir / f'checkpoint{epoch:04}.pth')
-            for checkpoint_path in checkpoint_paths:
-                utils.save_on_master({
-                    'model': model_without_ddp.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'lr_scheduler': lr_scheduler.state_dict(),
-                    'epoch': epoch,
-                    'args': args,
-                }, checkpoint_path)
+    debug_out_path = f'{output_dir}/preds/' if args.debug else None
+    if args.distributed: sampler_train.set_epoch(0)
+    eval_one_epoch_mot(model, criterion, data_loader_train, optimizer, device, 0, args.clip_max_norm, debug_out_path)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
+
+
+import math
+import os
+from tqdm import tqdm
+from typing import Iterable
+
+import torch
+import util.misc as utils
+
+from datasets.data_prefetcher import data_dict_to_cuda
+from util.plot_utils import visualize_gt, train_visualize_pred, visualize_pred
+
+@torch.no_grad()
+def eval_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
+                    data_loader: Iterable, optimizer: torch.optim.Optimizer,
+                    device: torch.device, epoch: int, max_norm: float = 0, debug_out_path:str=False):
+    model.eval()
+
+    for d_i, data_dict in tqdm(enumerate(data_loader)):
+        data_dict = data_dict_to_cuda(data_dict, device)
+
+        print('\nv1')
+        outputs = model(data_dict)
+        lines = train_visualize_pred(data_dict, outputs, 'outputs/pred1', model.args.prob_detect, d_i)
+
+        print('v2')
+        lines = []
+        track_instances = None
+        for i, img in enumerate(data_dict['imgs']):
+
+            # predict & keep > thresh
+            seq_h, seq_w, _ = img.shape
+            track_instances = model.inference_single_image([img], (seq_h, seq_w), track_instances, data_dict['exemplar'])
+
+            # save predictions
+            ori_img = img.cpu().permute(1,2,0).numpy()[:,:,::-1]
+            ori_img = (ori_img-ori_img.min())/(ori_img.max()-ori_img.min())*255
+            lines += visualize_pred(track_instances, ori_img, 'outputs/pred1', f'vid&{d_i}_fr{i}', i, model.args.prob_detect, True)            
+
+
 
 
 if __name__ == '__main__':
