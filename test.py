@@ -50,7 +50,7 @@ def main():
         det.detect(vid)
 
     print('getting scores..')
-    compute_mota(args.output_path, args.resume.split('/')[-1][:-4], args.gmot_path+'track_label', det.predict_path)
+    compute_mota(args.output_dir, args.resume.split('/')[-1][:-4], args.gmot_path+'/track_label/', str(det.predict_path)+'/')
 
 def load_svdataset(datasetname, split, args):
     assert datasetname in {'e2e_gmot', 'e2e_fscd'}, f'invalid dataset "{datasetname}"'
@@ -150,7 +150,7 @@ class Detector(object):
         self.gmot = model
         self.dataset = dataset  # list of tuples: (/path/to/MOT/vidname, )
 
-        self.predict_path = os.path.join(self.args.output_dir, 'predictions')
+        self.predict_path = os.path.join(self.args.output_dir, 'predictions', str(args.meta_arch)+str(args.dec_layers))
         shutil.rmtree(self.predict_path, ignore_errors=True)
         os.makedirs(self.predict_path, exist_ok=True)
 
@@ -191,12 +191,15 @@ def load_for_eval(args):
         for k in ARCHITECTURE:
             args.__dict__[k] = old_args.__getattribute__(k)
     
-    print('loading', args.resume, ':    ',  checkpoint['args'].meta_arch, checkpoint['args'].dec_layers, '         epochs:',checkpoint['epoch'])
+    msg = f'loading {args.resume},:     {checkpoint["args"].meta_arch} {checkpoint["args"].dec_layers}         epochs: {checkpoint["epoch"]}'
+    print(msg)
     model, _, _ = build_model(args)
     model.to(args.device).eval()
 
     model.load_state_dict(checkpoint['model'], strict=False)
 
+    with open(args.output_dir+'/modelstats.txt', 'a') as fout:
+        fout.write(msg + '   nparams:' + str(sum(p.numel() for p in model.parameters()))+ '\n')
     return model
 
 

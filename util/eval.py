@@ -5,7 +5,7 @@ import numpy as np
 
 def compute_mota(output_path, fname, gt_folder, preds_folder):
     gt_files = os.listdir(gt_folder)
-    summaries, names = [], ['AVG']
+    summaries, names = [], []
     for file in os.listdir(preds_folder):
         if file not in gt_files: continue
         print('evaluating...', file)
@@ -15,9 +15,11 @@ def compute_mota(output_path, fname, gt_folder, preds_folder):
         names.append(file.split('.')[0])
 
     stats = pd.concat(summaries)
+    stats['video'] = names
     avg = stats.mean(axis=0)
-    stats = pd.concat([avg, stats])
 
+    os.makedirs(f'{output_path}/results', exist_ok=True)
+    avg[['mota', 'idf1', 'motp', 'recall', 'precision', 'num_misses']].to_csv(f'{output_path}/results/avg{fname}.csv')
     stats[['video', 'mota', 'idf1', 'motp', 'recall', 'precision', 'num_misses']].to_csv(f'{output_path}/results/{fname}.csv')
 
 

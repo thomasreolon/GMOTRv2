@@ -33,11 +33,9 @@ class FSCDataset(Dataset):
                 if k=='annotations': v=[{**img, 'image_id':img['image_id']+100000} for img in v]
                 det[k] += v
             selected = set(self.selected[:-10] if split=='train' else self.selected[-10:])
-        elif split=='train':
-            det = det2
 
         # load listof(images,detections)
-        self.detections = self.load_anns(all_ann, det)
+        self.detections = self.load_anns(all_ann, det) + self.load_anns(all_ann, det2)
 
         if args.small_dataset:
             self.detections = [d for d in self.detections  if d[0] in selected]

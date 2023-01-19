@@ -12,7 +12,7 @@ for FILE in outputs/*
 do
     if [[ $FILE == *.pth ]]
     then
-        echo $FILE;
-        python3 test.py ${args} --resume $FILE --prob_detect 0.32
+        echo $FILE
+        python3 test.py ${args} --resume $FILE --prob_detect 0.32 --debug
     fi
 done
