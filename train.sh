@@ -28,7 +28,7 @@ args="${args} ${tmp}"
 # run code
 if [ $num_nodes -gt "1" ]
 then
-    python3 -m torch.distributed.launch --nproc_per_node=$num_nodes --use_env main.py $args |& tee -a out.log &
+    python3 -m torch.distributed.launch --nproc_per_node=$num_nodes --use_env main.py $args |& tee -a out.log
 else
-    CUDA_LAUNCH_BLOCKING=1 python3 main.py ${args} &
+    CUDA_LAUNCH_BLOCKING=1 python3 main.py ${args}
 fi

@@ -24,6 +24,7 @@ from configs.defaults import get_args_parser
 from datasets.fscd import build as build_fscd
 
 from util.plot_utils import visualize_pred, visualize_gt, train_visualize_pred
+from util.eval import compute_mota
 
 def main():
     # Info about code execution
@@ -36,7 +37,7 @@ def main():
 
     # Load dataset
     print('loading dataset...')
-    dataset = load_svdataset('e2e_fscd', 'val', args)
+    dataset = load_svdataset('e2e_gmot', 'val', args)
 
     # rank = int(os.environ.get('RLAUNCH_REPLICA', '0'))
     # ws = int(os.environ.get('RLAUNCH_REPLICA_TOTAL', '1'))
@@ -47,6 +48,9 @@ def main():
     print('tracking..')
     for vid in range(len(dataset)):
         det.detect(vid)
+
+    print('getting scores..')
+    compute_mota(args.output_path, args.resume.split('/')[-1][:-4], args.gmot_path+'track_label', det.predict_path)
 
 def load_svdataset(datasetname, split, args):
     assert datasetname in {'e2e_gmot', 'e2e_fscd'}, f'invalid dataset "{datasetname}"'
@@ -180,11 +184,17 @@ class Detector(object):
 
 
 def load_for_eval(args):
+    ARCHITECTURE = ['meta_arch', 'with_box_refine', 'two_stage', 'accurate_ratio', 'num_anchors', 'backbone', 'enable_fpn',  'position_embedding', 'num_feature_levels', 'enc_layers', 'dim_feedforward', 'num_queries', 'hidden_dim', 'dec_layers',  'nheads', 'enc_n_points', 'dec_n_points', 'decoder_cross_self', 'extra_track_attn', 'loss_normalizer']
+    checkpoint = torch.load(args.resume, map_location='cpu')
+    if 'args' in checkpoint:
+        old_args = checkpoint['args']
+        for k in ARCHITECTURE:
+            args.__dict__[k] = old_args.__getattribute__(k)
+    
+    print('loading', args.resume, ':    ',  checkpoint['args'].meta_arch, checkpoint['args'].dec_layers, '         epochs:',checkpoint['epoch'])
     model, _, _ = build_model(args)
     model.to(args.device).eval()
 
-    checkpoint = torch.load(args.resume, map_location='cpu')
-    print('loading', args.resume, ':    ',  checkpoint['args'].meta_arch, checkpoint['args'].dec_layers)
     model.load_state_dict(checkpoint['model'], strict=False)
 
     return model
