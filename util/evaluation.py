@@ -27,73 +27,18 @@ def read_results(filename, data_type: str, is_gt=False, is_ignore=False):
 
     return read_fun(filename, is_gt, is_ignore)
 
-# def read_mot_results(filename, is_gt, is_ignore):
-#     results_dict = dict()
-#     if os.path.isfile(filename):
-#         with open(filename, 'r') as f:
-#             for line in f.readlines():
-#                 linelist = line.split(',')
-#                 if len(linelist) < 7:
-#                     continue
-#                 fid = int(linelist[0])
-#                 if fid < 1:
-#                     continue
-#                 results_dict.setdefault(fid, list())
 
-#                 if is_gt:
-#                     mark = int(float(linelist[6]))
-#                     if mark == 0 :
-#                         continue
-#                     score = 1
-#                 elif is_ignore:
-#                     score = 1
-#                 else:
-#                     score = float(linelist[6])
-
-#                 tlwh = tuple(map(float, linelist[2:6]))
-#                 target_id = int(float(linelist[1]))
-#                 results_dict[fid].append((tlwh, target_id, score))
-
-#     return results_dict
-
-def read_mot_results(filename, is_gt, is_ignore):
-    valid_labels = {1}
-    ignore_labels = {0, 2, 7, 8, 12}
+def read_mot_results(filename):
     results_dict = dict()
     if os.path.isfile(filename):
         with open(filename, 'r') as f:
             for line in f.readlines():
                 linelist = line.split(',')
-                if len(linelist) < 7:
-                    continue
+
                 fid = int(linelist[0])
-                if fid < 1:
-                    continue
                 results_dict.setdefault(fid, list())
 
-                if is_gt:
-                    if 'MOT16-' in filename or 'MOT17-' in filename:
-                        label = int(float(linelist[7]))
-                        mark = int(float(linelist[6]))
-                        if mark == 0 or label not in valid_labels:
-                            continue
-                    score = 1
-                elif is_ignore:
-                    if 'MOT16-' in filename or 'MOT17-' in filename:
-                        label = int(float(linelist[7]))
-                        vis_ratio = float(linelist[8])
-                        if label not in ignore_labels and vis_ratio >= 0:
-                            continue
-                    elif 'MOT15' in filename:
-                        label = int(float(linelist[6]))
-                        if label not in ignore_labels:
-                            continue
-                    else:
-                        continue
-                    score = 1
-                else:
-                    score = float(linelist[6])
-
+                score = 1
                 tlwh = tuple(map(float, linelist[2:6]))
                 target_id = int(linelist[1])
 

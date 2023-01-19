@@ -43,6 +43,7 @@ def get_args_parser():
 
 
     parser.add_argument('--sgd', action='store_true')
+    parser.add_argument('--small_dataset', action='store_true')
 
     # Variants of Deformable DETR
     parser.add_argument('--with_box_refine', default=False, action='store_true')
@@ -105,7 +106,7 @@ def get_args_parser():
 
     # * Matcher
     parser.add_argument('--mix_match', action='store_true',)
-    parser.add_argument('--set_cost_class', default=2, type=float,
+    parser.add_argument('--set_cost_class', default=4, type=float,
                         help="Class coefficient in the matching cost")
     parser.add_argument('--set_cost_bbox', default=5, type=float,
                         help="L1 box coefficient in the matching cost")
@@ -115,7 +116,7 @@ def get_args_parser():
     # * Loss coefficients
     parser.add_argument('--mask_loss_coef', default=1, type=float)
     parser.add_argument('--dice_loss_coef', default=1, type=float)
-    parser.add_argument('--cls_loss_coef', default=2, type=float)
+    parser.add_argument('--cls_loss_coef', default=4, type=float)
     parser.add_argument('--bbox_loss_coef', default=5, type=float)
     parser.add_argument('--giou_loss_coef', default=2, type=float)
     parser.add_argument('--focal_alpha', default=0.25, type=float)

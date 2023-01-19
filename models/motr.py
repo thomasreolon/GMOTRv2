@@ -498,7 +498,6 @@ class MOTR(nn.Module):
 
     def _forward_single_image(self, samples, exemplar, track_instances: Instances, gtboxes=None):
         ## Extract Features from Frame
-        gtboxes=None
         features, pos = self.backbone(samples)
         src, mask = features[-1].decompose()
         assert mask is not None
@@ -723,9 +722,42 @@ class MOTR(nn.Module):
             outputs['pred_logits'].append(frame_res['pred_logits'])
             outputs['pred_boxes'].append(frame_res['pred_boxes'])
 
-            inst = frame_res['dt_instances'] if self.training else track_instances
+            inst = frame_res['dt_instances'] if self.training and self.args.debug else track_instances.clone()
             dt_instances = self.post_process(inst.to('cpu'), (data['imgs'][0].shape[-2:]))
             outputs['post_proc'].append(dt_instances)
+
+            if False:     # if true will show HUNGARIAN MATCHED detections for each image (debugging)
+                import cv2
+                dt_instances = self.post_process(track_instances, data['imgs'][0].shape[-2:])
+
+                keep = dt_instances.scores > .02
+                keep &= dt_instances.obj_idxes >= 0
+                dt_instances = dt_instances[keep]
+
+                wh = dt_instances.boxes[:, 2:4] - dt_instances.boxes[:, 0:2]
+                areas = wh[:, 0] * wh[:, 1]
+                keep = areas > 100
+                dt_instances = dt_instances[keep]
+
+                if len(dt_instances)==0:
+                    print('nothing found')
+                else:
+                    print('ok')
+                    bbox_xyxy = dt_instances.boxes.tolist()
+                    identities = dt_instances.obj_idxes.tolist()
+
+                    img = data['imgs'][frame_index].clone().cpu().permute(1,2,0).numpy()[:,:,::-1]
+                    for xyxy, track_id in zip(bbox_xyxy, identities):
+                        if track_id < 0 or track_id is None:
+                            continue
+                        x1, y1, x2, y2 = [int(a) for a in xyxy]
+                        color = tuple([(((5+track_id*3)*4909 % p)%256) /110 for p in (3001, 1109, 2027)])
+
+                        tmp = img[ y1:y2, x1:x2].copy()
+                        img[y1-3:y2+3, x1-3:x2+3] = color
+                        img[y1:y2, x1:x2] = tmp
+                    cv2.imshow('preds', img/4+.4)
+                    cv2.waitKey()
 
         if not self.training:
             outputs['track_instances'] = track_instances

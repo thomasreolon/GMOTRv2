@@ -17,6 +17,7 @@ from tqdm import tqdm
 from models import build_model
 from main import get_args_parser
 
+import shutil
 from models.structures import Instances
 from torch.utils.data import Dataset, DataLoader
 from configs.defaults import get_args_parser
@@ -30,15 +31,12 @@ def main():
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # Build Model
-    model = load_for_eval(args).to(args.device)
-    model.track_base.score_thresh = args.prob_detect
-    model.track_base.filter_score_thresh = args.prob_detect*.8
-    model.track_base.miss_tolerance = 10
+    model = load_for_eval(args).to(args.device).eval()
     model.track_embed.score_thr = args.prob_detect*.8
 
     # Load dataset
     print('loading dataset...')
-    dataset = load_svdataset('e2e_gmot', 'train', args)
+    dataset = load_svdataset('e2e_fscd', 'val', args)
 
     # rank = int(os.environ.get('RLAUNCH_REPLICA', '0'))
     # ws = int(os.environ.get('RLAUNCH_REPLICA_TOTAL', '1'))
@@ -60,7 +58,7 @@ def load_svdataset(datasetname, split, args):
         return load_fscd(split, args)
 
 def load_gmot(split, args):
-    base_path = args.gmot_path+'/GenericMOT_JPEG_Sequence/'
+    base_path = args.gmot_path+'/GenericMOT_JPEG_Sequence'
 
     list_dataset = []
     videos = os.listdir(base_path)
@@ -76,9 +74,9 @@ def load_gmot(split, args):
         bb = line[2], line[3], line[2]+line[4], line[3]+line[5],
 
         # get images
-        imgs = sorted(os.listdir(f'{base_path}{video}/img1'))
+        imgs = sorted(os.listdir(f'{base_path}/{video}/img1'))
 
-        list_dataset.append((f'{base_path}{video}/img1/', imgs, bb))  # none should be the exemplar_bb xyxy
+        list_dataset.append((f'{base_path}/{video}/img1/', imgs, bb))  # none should be the exemplar_bb xyxy
 
     return list_dataset
 
@@ -90,8 +88,9 @@ def load_fscd(split, args):
 
     list_dataset = []
     for vid in [59,42,10,21,39]:
+        vid = vid%len(ds)
         data = ds[vid]
-        list_dataset.append([None, data['imgs'], data['exemplar'][0]])
+        list_dataset.append([f'idx{vid}//', data['imgs'], data['exemplar'][0]])
     return list_dataset
 
 
@@ -148,11 +147,13 @@ class Detector(object):
         self.dataset = dataset  # list of tuples: (/path/to/MOT/vidname, )
 
         self.predict_path = os.path.join(self.args.output_dir, 'predictions')
+        shutil.rmtree(self.predict_path, ignore_errors=True)
         os.makedirs(self.predict_path, exist_ok=True)
 
     @torch.no_grad()
     def detect(self, video=0):
         self.gmot.track_base.clear()
+        v_name = self.dataset[video][0].split('/')[-3]
 
         loader = DataLoader(ListImgDataset(*self.dataset[video]), 1, num_workers=2)
         lines = []
@@ -170,18 +171,22 @@ class Detector(object):
             # save predictions
             ori_img = (ori_img-ori_img.min())/(ori_img.max()-ori_img.min())*255
             show = i%(len(loader)//5)==0 and self.args.debug
-            lines += visualize_pred(track_instances, ori_img, self.predict_path, f'vid{video}_fr{i}', i, self.args.prob_detect, show)            
+            lines += visualize_pred(track_instances, ori_img, self.predict_path, f'vid{v_name}_fr{i}', i, self.args.prob_detect, show)            
 
-        with open(os.path.join(self.predict_path, f'{video}.txt'), 'w') as f:
+        with open(os.path.join(self.predict_path, f'{v_name}.txt'), 'w') as f:
             f.writelines(lines)
-        print("totally {} dts".format(len(lines)))
+        print("{}: totally {} dts [{} per frame]".format(v_name, len(lines), len(lines)/len(loader)))
+
 
 
 def load_for_eval(args):
     model, _, _ = build_model(args)
     model.to(args.device).eval()
+
     checkpoint = torch.load(args.resume, map_location='cpu')
+    print('loading', args.resume, ':    ',  checkpoint['args'].meta_arch, checkpoint['args'].dec_layers)
     model.load_state_dict(checkpoint['model'], strict=False)
+
     return model
 
 

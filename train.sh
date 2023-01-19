@@ -1,3 +1,6 @@
+
+trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM EXIT
+
 args=''
 num_nodes=1
 for var in "$@"
@@ -29,6 +32,3 @@ then
 else
     CUDA_LAUNCH_BLOCKING=1 python3 main.py ${args} &
 fi
-
-trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM EXIT
-read -p "Press [Enter] key to exit..."

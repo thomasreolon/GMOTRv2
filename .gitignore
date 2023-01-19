@@ -10,3 +10,6 @@ build/
 outputs
 configs/tmp.args
 configs/_paths.args
+
+train1.sh
+train2.sh

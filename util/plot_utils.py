@@ -231,7 +231,7 @@ def visualize_pred(dt_instances, img, output_dir='outputs/', f_name=None, f_num=
                 continue
             x1, y1, x2, y2 = [max(0, int(a)) for a in xyxy]
             w, h = x2 - x1, y2 - y1
-            lines.append(save_format.format(frame=f_num + 1, id=track_id, x1=x1, y1=y1, w=w, h=h))
+            lines.append(save_format.format(frame=f_num, id=track_id, x1=x1, y1=y1, w=w, h=h))
             color = tuple([((5+track_id*3)*4909 % p)%256 for p in (3001, 1109, 2027)])
 
             tmp = img[ y1:y2, x1:x2].copy()

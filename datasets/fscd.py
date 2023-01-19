@@ -27,7 +27,7 @@ class FSCDataset(Dataset):
         all_ann = json.load(open(args.fscd_path+'/annotation_FSC147_384.json', 'r'))
 
         # select train/test  (a bit ugly cause we have GT only for some images)
-        if args.debug:
+        if args.small_dataset:
             for k,v in det2.items():
                 if k=='images': v=[{**img, 'id':img['id']+100000} for img in v]
                 if k=='annotations': v=[{**img, 'image_id':img['image_id']+100000} for img in v]
@@ -39,7 +39,7 @@ class FSCDataset(Dataset):
         # load listof(images,detections)
         self.detections = self.load_anns(all_ann, det)
 
-        if args.debug:
+        if args.small_dataset:
             self.detections = [d for d in self.detections  if d[0] in selected]
 
     def load_anns(self, d_exe, d_det):

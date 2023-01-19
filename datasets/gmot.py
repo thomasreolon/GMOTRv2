@@ -71,7 +71,7 @@ class GMOTDataset(Dataset):
             txt_path = f'{dataset_path}/track_label/{vid}.txt'
             self.data[vid] = load_labels(txt_path)
 
-            if self.args.debug:
+            if self.args.small_dataset:
                 self.data[vid] = {k:v for k,v in self.data[vid].items() if k<40}
 
             self.video_dict[vid] = len(self.video_dict)
