@@ -547,11 +547,11 @@ class MOTR(nn.Module):
 
         ## Add BB_exemplar
         if self.args.extract_exe_from_img and self.args.use_exe_query:
-            ref_pts = torch.cat((ref_pts, (exemplar.view(1,4)).repeat(2,1)))
-            query_embed = torch.cat([query_embed, self.query_exemplar(exemplar.view(1,4))+exefeatures[0,:,[0,-1], [0,-1]].T])
+            ref_pts = torch.cat(((exemplar.view(1,4)).repeat(2,1), ref_pts))
+            query_embed = torch.cat([self.query_exemplar(exemplar.view(1,4))+exefeatures[0,:,[0,-1], [0,-1]].T, query_embed])
             if attn_mask is not None:
                 attn_mask = torch.zeros((len(ref_pts), len(ref_pts)), dtype=bool, device=ref_pts.device)
-                attn_mask[:n_dt, n_dt:-1] = True
+                attn_mask[:n_dt+1, 1+n_dt:] = True
 
         ## TRANSFORMER
         hs, init_reference, inter_references, is_anchor, _ = \
@@ -584,7 +584,7 @@ class MOTR(nn.Module):
         
         if self.args.extract_exe_from_img and self.args.use_exe_query:
             ## DROP BB exemplar (or keep if invent a new loss)
-            hs, outputs_class, outputs_coord = hs[:,:,:-1], outputs_class[:,:,:-1], outputs_coord[:,:,:-1]
+            hs, outputs_class, outputs_coord = hs[:,:,1:], outputs_class[:,:,1:], outputs_coord[:,:,1:]
 
 
         ## Outputs Dict
@@ -600,7 +600,7 @@ class MOTR(nn.Module):
         if self.args.extract_exe_from_img:
             for src in srcs:
                 b,c,H,W = src.shape
-                bb = (exemplar.view(2,2) * torch.tensor([H,W], device=exemplar.device).view(1,2)).int().flatten()  # coords in src
+                bb = (exemplar.view(2,2) * torch.tensor([W,H], device=exemplar.device).view(1,2)).int().flatten()  # coords in src
                 wc,hc,w,h = bb
                 hh=lambda h: max(0,min(h,H-1)) ; ww=lambda w: max(0,min(w,W-1))
                 exefeatures.append(src[:,:, hh(hc-h//2): hc+h//2+2, ww(wc-w//2):wc+w//2+2].mean(dim=(2,3)))

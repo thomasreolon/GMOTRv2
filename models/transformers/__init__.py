@@ -18,5 +18,8 @@ def build_deforamble_transformer(args):
     if args.meta_arch == 'deformable_anchor':
         from .anchor import  build_deforamble_transformer as build_anchor
         return build_anchor(args)
+    if args.meta_arch == 'deformable_detr_full':
+        from .original_full import  build_deforamble_transformer as build_full
+        return build_full(args)
     else:
         raise NotImplementedError(args.meta_arch)
