@@ -57,9 +57,15 @@ def generalized_box_iou(boxes1, boxes2):
     and M = len(boxes2)
     """
     # degenerate boxes gives inf / nan results
-    # so do an early check
-    assert (boxes1[:, 2:] >= boxes1[:, :2]).all()
-    assert (boxes2[:, 2:] >= boxes2[:, :2]).all()
+    if not (boxes1[:, 2:] >= boxes1[:, :2]).all():
+        with torch.no_grad():
+            diff = -boxes1[:, 2:] + boxes1[:, :2] +0.002
+        boxes1 = torch.cat((boxes1[:, :2], boxes1[:, 2:]+diff), dim=1)
+    if not (boxes2[:, 2:] >= boxes2[:, :2]).all():
+        with torch.no_grad():
+            diff = -boxes2[:, 2:] + boxes2[:, :2] +0.002
+        boxes2 = torch.cat((boxes2[:, :2], boxes2[:, 2:]+diff), dim=1)
+
     iou, union = box_iou(boxes1, boxes2)
 
     lt = torch.min(boxes1[:, None, :2], boxes2[:, :2])

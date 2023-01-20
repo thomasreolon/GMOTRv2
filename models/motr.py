@@ -395,6 +395,7 @@ class MOTR(nn.Module):
         self.position = nn.Embedding(args.num_queries, 4)
         self.yolox_embed = nn.Embedding(1, hidden_dim)
         self.query_embed = nn.Embedding(args.num_queries, hidden_dim)
+        self.query_exemplar = nn.Linear(4, hidden_dim)
         if args.query_denoise:
             self.refine_embed = nn.Embedding(1, hidden_dim)
         if args.num_feature_levels > 1:
@@ -525,17 +526,7 @@ class MOTR(nn.Module):
                 pos.append(pos_l)
 
         ## Extract Features from Exemplar and add as feature layer
-        exefeatures=[]
-        for l, (feat, _) in enumerate(zip(*self.backbone(exemplar))):
-            esrc, mask = feat.decompose()
-            esrc = self.input_proj[l](esrc)
-            p = (mask.sum() / mask.numel())
-            b,c,h,w = esrc.shape
-            hc,wc = h//2,w//2
-            exefeatures.append(esrc[:,:,hc-int(p*hc):hc+int(p*hc)+2, wc-int(p*wc):wc+int(p*wc)+2].mean(dim=(2,3)))
-            exefeatures.append((esrc[:,:,hc-int(.5*p*hc), wc]+esrc[:,:,hc-int(.5*p*hc), wc]+esrc[:,:,hc, wc-int(.5*p*wc)]+esrc[:,:,hc, wc+int(.5*p*wc)])/4)
-            exefeatures.append(esrc[:,:,hc,wc])
-        exefeatures = torch.stack(exefeatures, dim=-1).view(b,c,-1,3)
+        exefeatures=self._extract_exemplar_features(exemplar, srcs)
         srcs.append(exefeatures)
         masks.append(torch.zeros_like(exefeatures[:,0]).bool())
         pos.append(torch.zeros_like(exefeatures))
@@ -554,6 +545,13 @@ class MOTR(nn.Module):
             ref_pts = track_instances.ref_pts
             attn_mask = None
 
+        ## Add BB_exemplar
+        if self.args.extract_exe_from_img and self.args.use_exe_query:
+            ref_pts = torch.cat((ref_pts, (exemplar.view(1,4)).repeat(2,1)))
+            query_embed = torch.cat([query_embed, self.query_exemplar(exemplar.view(1,4))+exefeatures[0,:,[0,-1], [0,-1]].T])
+            if attn_mask is not None:
+                attn_mask = torch.zeros((len(ref_pts), len(ref_pts)), dtype=bool, device=ref_pts.device)
+                attn_mask[:n_dt, n_dt:-1] = True
 
         ## TRANSFORMER
         hs, init_reference, inter_references, is_anchor, _ = \
@@ -583,6 +581,11 @@ class MOTR(nn.Module):
                 outputs_coords.append(outputs_coord)
             outputs_class = torch.stack(outputs_classes)
             outputs_coord = torch.stack(outputs_coords)
+        
+        if self.args.extract_exe_from_img and self.args.use_exe_query:
+            ## DROP BB exemplar (or keep if invent a new loss)
+            hs, outputs_class, outputs_coord = hs[:,:,:-1], outputs_class[:,:,:-1], outputs_coord[:,:,:-1]
+
 
         ## Outputs Dict
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
@@ -592,13 +595,31 @@ class MOTR(nn.Module):
         return out
 
     def _extract_exemplar_features(self, exemplar, srcs):
-        exe_features = []
+        exefeatures = []
+
         if self.args.extract_exe_from_img:
             for src in srcs:
-                _,c,h,w = src.shape
-                bb = (exemplar.view(2,2) * torch.tensor([src.shape[2],src.shape[1]]).view(1,2)).flatten()  # coords in src
-                bb = torch.cat((bb[:2]-bb[2:]/2, bb[:2]+bb[2:]/2)).int()               # x1y1x2y2
-                exe_features.append(src[:, bb[1]:bb[3], bb[0]:bb[2]])
+                b,c,H,W = src.shape
+                bb = (exemplar.view(2,2) * torch.tensor([H,W], device=exemplar.device).view(1,2)).int().flatten()  # coords in src
+                wc,hc,w,h = bb
+                hh=lambda h: max(0,min(h,H-1)) ; ww=lambda w: max(0,min(w,W-1))
+                exefeatures.append(src[:,:, hh(hc-h//2): hc+h//2+2, ww(wc-w//2):wc+w//2+2].mean(dim=(2,3)))
+                exefeatures.append((src[:,:,hh(hc-h//4),wc]+src[:,:,hh(hc-h//4), wc]+src[:,:,hc, ww(wc-w//4)]+src[:,:,hc, ww(wc+w//4)])/4)
+                exefeatures.append(src[:,:,hc,wc])
+        else:
+            ## Extract Features from Exemplar and add as feature layer
+            exefeatures=[]
+            for l, (feat, _) in enumerate(zip(*self.backbone(exemplar))):
+                esrc, mask = feat.decompose()
+                esrc = self.input_proj[l](esrc)
+                p = (mask.sum() / mask.numel())
+                b,c,h,w = esrc.shape
+                hc,wc = h//2,w//2
+                exefeatures.append(esrc[:,:,hc-int(p*hc):hc+int(p*hc)+2, wc-int(p*wc):wc+int(p*wc)+2].mean(dim=(2,3)))
+                exefeatures.append((esrc[:,:,hc-int(.5*p*hc), wc]+esrc[:,:,hc-int(.5*p*hc), wc]+esrc[:,:,hc, wc-int(.5*p*wc)]+esrc[:,:,hc, wc+int(.5*p*wc)])/4)
+                exefeatures.append(esrc[:,:,hc,wc])
+        exefeatures = torch.stack(exefeatures, dim=-1).view(b,c,-1,3)
+        return exefeatures
 
     def _post_process_single_image(self, frame_res, track_instances, is_last):
         if self.query_denoise > 0:
@@ -670,7 +691,7 @@ class MOTR(nn.Module):
         if self.training:
             self.criterion.initialize_for_single_clip(data['gt_instances'])
         frames = data['imgs']  # list of Tensor.
-        exemplar = data['exemplar'][1] if self.args.extract_exe_from_img in data else data['exemplar'][0]
+        exemplar = data['exemplar'][1] if self.args.extract_exe_from_img else data['exemplar'][0]
 
         outputs = {
             'pred_logits': [],
@@ -728,7 +749,8 @@ class MOTR(nn.Module):
                 }
             else:
                 frame = nested_tensor_from_tensor_list([frame])
-                exemplar = nested_tensor_from_tensor_list([exemplar], 64)
+                if not self.args.extract_exe_from_img:
+                    exemplar = nested_tensor_from_tensor_list([exemplar], 64)
                 frame_res = self._forward_single_image(frame, exemplar, track_instances, gtboxes)
             frame_res = self._post_process_single_image(frame_res, track_instances, is_last) # TODO do it inside of checkpoint
 

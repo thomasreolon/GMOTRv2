@@ -1,5 +1,7 @@
 --dataset_file e2e_fscd
 
+--epochs 30
+
 --lr 2e-4
 --lr_drop 4
 --lr_backbone 2e-5

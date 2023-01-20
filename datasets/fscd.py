@@ -106,9 +106,9 @@ class FSCDataset(Dataset):
 
 
     def get_exemplar(self,img,target, p=0):
-        bb = target['boxes'][p].clone()
-        bb = bb.clamp(min=0)
-        bb = (bb.view(2,2) * torch.tensor([img.shape[2],img.shape[1]]).view(1,2)).flatten()  # coords in img
+        bbnorm = target['boxes'][p].clone()
+        bbnorm = bbnorm.clamp(min=0)
+        bb = (bbnorm.view(2,2) * torch.tensor([img.shape[2],img.shape[1]]).view(1,2)).flatten()  # coords in img
         bb = torch.cat((bb[:2]-bb[2:]/2, bb[:2]+bb[2:]/2)).int()               # x1y1x2y2
         crop = img[:, bb[1]:bb[3], bb[0]:bb[2]]
 
@@ -120,7 +120,7 @@ class FSCDataset(Dataset):
         elif max_dim==0:
             # get next box in case of errors
             return self.get_exemplar(img, target, p+1)
-        return [crop, bb]
+        return [crop, bbnorm]
 
     def set_epoch(self, epoch):
         self.current_epoch = epoch
