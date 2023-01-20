@@ -12,5 +12,11 @@ def build_deforamble_transformer(args):
     if args.meta_arch == 'deformable_attnkernel':
         from .attn_kernel import  build_deforamble_transformer as build_attn2
         return build_attn2(args)
+    if args.meta_arch == 'deformable_mixed':
+        from .mixed import  build_deforamble_transformer as build_mixed
+        return build_mixed(args)
+    if args.meta_arch == 'deformable_anchor':
+        from .anchor import  build_deforamble_transformer as build_anchor
+        return build_anchor(args)
     else:
         raise NotImplementedError(args.meta_arch)

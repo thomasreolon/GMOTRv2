@@ -1,0 +1,4 @@
+--meta_arch deformable_anchor
+--num_queries 100
+
+--num_feature_levels 3

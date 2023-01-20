@@ -556,30 +556,33 @@ class MOTR(nn.Module):
 
 
         ## TRANSFORMER
-        hs, init_reference, inter_references, _, _ = \
+        hs, init_reference, inter_references, is_anchor, _ = \
             self.transformer(srcs, masks, pos, query_embed, ref_pts=ref_pts, attn_mask=attn_mask)
 
-        ## Head
-        outputs_classes = []
-        outputs_coords = []
-        for lvl in range(hs.shape[0]):
-            if lvl == 0:
-                reference = init_reference
-            else:
-                reference = inter_references[lvl - 1]
-            reference = inverse_sigmoid(reference)
-            outputs_class = self.class_embed[lvl](hs[lvl])
-            tmp = self.bbox_embed[lvl](hs[lvl])
-            if reference.shape[-1] == 4:
-                tmp += reference
-            else:
-                assert reference.shape[-1] == 2
-                tmp[..., :2] += reference
-            outputs_coord = tmp.sigmoid()
-            outputs_classes.append(outputs_class)
-            outputs_coords.append(outputs_coord)
-        outputs_class = torch.stack(outputs_classes)
-        outputs_coord = torch.stack(outputs_coords)
+        if is_anchor==3: ## anchor_transformer computes positions in its own code
+            hs, outputs_class, outputs_coord = hs, init_reference, inter_references
+        else:
+            ## Head
+            outputs_classes = []
+            outputs_coords = []
+            for lvl in range(hs.shape[0]):
+                if lvl == 0:
+                    reference = init_reference
+                else:
+                    reference = inter_references[lvl - 1]
+                reference = inverse_sigmoid(reference)
+                outputs_class = self.class_embed[lvl](hs[lvl])
+                tmp = self.bbox_embed[lvl](hs[lvl])
+                if reference.shape[-1] == 4:
+                    tmp += reference
+                else:
+                    assert reference.shape[-1] == 2
+                    tmp[..., :2] += reference
+                outputs_coord = tmp.sigmoid()
+                outputs_classes.append(outputs_class)
+                outputs_coords.append(outputs_coord)
+            outputs_class = torch.stack(outputs_classes)
+            outputs_coord = torch.stack(outputs_coords)
 
         ## Outputs Dict
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
@@ -587,6 +590,15 @@ class MOTR(nn.Module):
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
         out['hs'] = hs[-1]
         return out
+
+    def _extract_exemplar_features(self, exemplar, srcs):
+        exe_features = []
+        if self.args.extract_exe_from_img:
+            for src in srcs:
+                _,c,h,w = src.shape
+                bb = (exemplar.view(2,2) * torch.tensor([src.shape[2],src.shape[1]]).view(1,2)).flatten()  # coords in src
+                bb = torch.cat((bb[:2]-bb[2:]/2, bb[:2]+bb[2:]/2)).int()               # x1y1x2y2
+                exe_features.append(src[:, bb[1]:bb[3], bb[0]:bb[2]])
 
     def _post_process_single_image(self, frame_res, track_instances, is_last):
         if self.query_denoise > 0:
@@ -658,7 +670,8 @@ class MOTR(nn.Module):
         if self.training:
             self.criterion.initialize_for_single_clip(data['gt_instances'])
         frames = data['imgs']  # list of Tensor.
-        exemplar = data['exemplar'][0] if 'exemplar' in data else torch.zeros(3,64,64,device=frames[0].device)
+        exemplar = data['exemplar'][1] if self.args.extract_exe_from_img in data else data['exemplar'][0]
+
         outputs = {
             'pred_logits': [],
             'pred_boxes': [],
@@ -688,7 +701,8 @@ class MOTR(nn.Module):
             if self.use_checkpoint and frame_index < len(frames) - 1:
                 def fn(frame, exemplar, gtboxes, *args):
                     frame = nested_tensor_from_tensor_list([frame])
-                    exemplar = nested_tensor_from_tensor_list([exemplar], 64)
+                    if not self.args.extract_exe_from_img:
+                        exemplar = nested_tensor_from_tensor_list([exemplar], 64)
                     tmp = Instances((1, 1), **dict(zip(keys, args)))
                     frame_res = self._forward_single_image(frame, exemplar, tmp, gtboxes)
                     return (
@@ -702,7 +716,7 @@ class MOTR(nn.Module):
                 args = [frame, exemplar, gtboxes] + [track_instances.get(k) for k in keys]
                 params = tuple((p for p in self.parameters() if p.requires_grad))
                 tmp = checkpoint.CheckpointFunction.apply(fn, len(args), *args, *params)
-                n_dec = self.transformer.num_decoder_layers - 1
+                n_dec = self.transformer.decoder.num_layers - 1
                 frame_res = {
                     'pred_logits': tmp[0],
                     'pred_boxes': tmp[1],
