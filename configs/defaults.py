@@ -8,6 +8,7 @@ def get_args_parser():
 
     parser.add_argument('--gmot_path', default='/data/Dataset/mot', type=str)
     parser.add_argument('--fscd_path', default='/data/Dataset/mot', type=str)
+    parser.add_argument('--synth_path', default='/data/Dataset/mot', type=str)
     parser.add_argument('--dance_path', default='/data/Dataset/mot', type=str)
     parser.add_argument('--prob_detect', default=0.2, type=float)
     parser.add_argument('--extract_exe_from_img', action='store_true')

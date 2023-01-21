@@ -1,5 +1,0 @@
---meta_arch deformable_detr_full
---num_queries 100
-
---extract_exe_from_img
---use_exe_query

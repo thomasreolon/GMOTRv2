@@ -161,20 +161,22 @@ def image_hwc2chw(image: np.ndarray):
 
 
 
-def _debug_frame(frame, out_w=400):
+def _debug_frame(frame, out_w=400, out_h=None):
     """util to make frame to writable"""
     if len(frame.shape) == 4: frame = frame[0]
     frame = np.ascontiguousarray(frame.clone().cpu().permute(1,2,0).numpy() [:,:,::-1]) /4+0.4 # frame in BGR
     frame = np.uint8(255*(frame-frame.min())/(frame.max()-frame.min()))
     h,w,_ = frame.shape
-    return cv2.resize(frame, (out_w,int(out_w*h/w)))
+    out_h = int(out_w*h/w) if out_h is None else out_h
+    return cv2.resize(frame, (out_w,out_h))
 
 def visualize_gt(data_dict, output_dir, i=0):
     os.makedirs(output_dir, exist_ok=True)   
     # image shape
     num_imgs = len(data_dict['imgs']) + 1
     num_rows = int(np.sqrt(num_imgs))
-    whites_to_add = 1 + num_imgs - num_rows*(num_rows+1)
+    num_cols = num_rows if num_rows**2==num_imgs else num_rows+1
+    whites_to_add = 1 + num_imgs - num_rows*num_cols
 
     # write bboxes on images
     imgs = []
@@ -188,9 +190,9 @@ def visualize_gt(data_dict, output_dir, i=0):
                 x1,x2 = box[0,0] - box[1,0].div(2,rounding_mode='trunc'), box[0,0] + box[1,0].div(2,rounding_mode='trunc')
                 y1,y2 = box[0,1] - box[1,1].div(2,rounding_mode='trunc'), box[0,1] + box[1,1].div(2,rounding_mode='trunc')
                 x1,x2,y1,y2 = clean(x1,W),clean(x2,W),clean(y1,H),clean(y2,H)
-                tmp = img[y1:y2, x1:x2].copy()
-                img[y1-2:y2+2, x1-2:x2+2] = (255,0,255)
-                img[y1:y2, x1:x2] = tmp
+                tmp = img[y1+1:y2-1, x1+1:x2-1].copy()
+                img[y1:y2+1, x1:x2+1] = (255,0,255)
+                img[y1+1:y2-1, x1+1:x2-1] = tmp
         imgs.append(img)
     imgs += [200*np.ones_like(img) for _ in range(whites_to_add)]
 
@@ -202,7 +204,7 @@ def visualize_gt(data_dict, output_dir, i=0):
     imgs[-1][h1:h2, w1:w2] = exemplar
 
     # unique image
-    imgs = np.stack(imgs).reshape(num_rows, num_rows+1, H,W,3)
+    imgs = np.stack(imgs).reshape(num_rows, num_cols, H,W,3)
     imgs = np.concatenate([i for i in imgs], axis=1)
     imgs = np.concatenate([i for i in imgs], axis=1)
 
