@@ -4,7 +4,7 @@ from models.structures import Instances
 import torchvision.transforms.functional as F
 
 from scipy.ndimage import rotate
-
+from.transforms import MotRandomResize
 
 def add_patch(img, patch, coord):
     h,w,_ = patch.shape
@@ -19,13 +19,14 @@ def get_movement(img, strength):
     dh = int((torch.rand(1)-.5)*img.shape[0]*strength)
     return dw, dh
 
-def augment(patch):
+def augment(patch, img_h=999, img_w=999):
     r = torch.rand(4)
     if r[0]>.0: # rotate
         patch = rotate_img(patch, float(r[1]*4-2))
     if r[2]>.0: #resize
         w,h = int(patch.shape[1]*(.86+.28*r[3])), int(patch.shape[0]*(.9+.2*r[3]))
         w,h = max(w,16), max(h,16)
+        w,h = min(img_w//4,w), min(img_h//4,h)
         patch = cv2.resize(patch, (w,h))
     return patch
 
@@ -49,7 +50,7 @@ def simulate(img, data):
         coord[1] += int(velocity[1])
         velocity[0] *= .8 + torch.rand(1)*.4
         velocity[1] *= .8 + torch.rand(1)*.4
-        patch = augment(patch)
+        patch = augment(patch, *img.shape[:2])
         data[i][0] = patch
 
         if torch.rand(1)>.5 and (min(coord)==0 or coord[0]>img.shape[1]-20 or coord[1]>img.shape[0]-20):
@@ -64,6 +65,7 @@ class SynthData(torch.utils.data.Dataset):
         super().__init__()
         self.args = args
         dir_path = args.synth_path
+        self.transf = MotRandomResize([608, 640, 672, 704, 736, 768, 800, 832, 864, 896, 928, 960, 992], max_size=1536)
 
         samples = []
         images  = [x for x in os.listdir(dir_path) if x != 'bg']
@@ -82,7 +84,7 @@ class SynthData(torch.utils.data.Dataset):
             img = cv2.imread(dir_path+'/bg/'+bg)
             img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             img = 0.9 + 0.1*img / 254.9
-            w,h = 650, int(650*img.shape[0]/img.shape[1])
+            w,h = 700, int(700*img.shape[0]/img.shape[1])
             img = cv2.resize(img, (w,h))
             bgs.append(img[:,:,None])
         self.bgs = bgs
@@ -92,7 +94,7 @@ class SynthData(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         bg_idx = (idx*2999) % len(self.bgs)
-        idx = (idx*3533) % len(self.samples)
+        idx = idx % len(self.samples)
         d_idx = idx-1  - (idx*421) % (len(self.samples)-1)
         
         bg = self.bgs[bg_idx]
@@ -107,6 +109,8 @@ class SynthData(torch.utils.data.Dataset):
             patch = cv2.resize(patch, (int(patch.shape[1]*r), int(patch.shape[0]*r)))
             coord = [int(torch.rand(1)*base_bg.shape[1]), int(torch.rand(1)*base_bg.shape[0])]
             add_patch(base_bg, patch, coord)
+        scale = [608, 640, 672, 704, 736, 768, 800,][int(torch.rand(1)*7)]
+        base_bg = cv2.resize(base_bg, (scale, int(scale*base_bg.shape[0]/base_bg.shape[1])))
 
         r = max((60-(len(crops)*(.6+.4*torch.rand(1)))+torch.rand(1)*40 )/2, 16)/ min(crops[0].shape[:2])
         for i in range(len(crops)):
