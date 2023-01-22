@@ -297,7 +297,7 @@ def _max_by_axis(the_list):
     return maxes
 
 
-def nested_tensor_from_tensor_list(tensor_list: List[Tensor], size_divisibility: int = 0):
+def nested_tensor_from_tensor_list(tensor_list: List[Tensor], size_divisibility: int = 0, min_size=64):
     # TODO make this more general
     if tensor_list[0].ndim == 3:
         # TODO make it support different-sized images
@@ -308,6 +308,10 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor], size_divisibility:
             # the last two dims are H,W, both subject to divisibility requirement
             max_size[-1] = (max_size[-1] + (stride - 1)) // stride * stride
             max_size[-2] = (max_size[-2] + (stride - 1)) // stride * stride
+        if min_size:
+            max_size[-1] = max(min_size, max_size[-1])
+            max_size[-2] = max(min_size, max_size[-2])
+
 
         # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
         batch_shape = [len(tensor_list)] + max_size

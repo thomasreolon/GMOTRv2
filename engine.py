@@ -45,17 +45,18 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
         # reduce losses over all GPUs for logging purposes
-        loss_dict_reduced = utils.reduce_dict(loss_dict)
-        loss_dict_reduced_scaled = {k: v * weight_dict[k]
-                                    for k, v in loss_dict_reduced.items() if k in weight_dict}
-        loss_dict_reduced_scaled = {k: v  for k, v in loss_dict_reduced.items()
-                                          if 'aux' not in k and '_1' not in k and '_2' not in k and '_3' not in k}
-        losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
-        loss_value = losses_reduced_scaled.item()
-        if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
-            print(loss_dict_reduced)
-            sys.exit(1)
+        if d_i%print_freq==0:
+            loss_dict_reduced = utils.reduce_dict(loss_dict)
+            loss_dict_reduced_scaled = {k: v * weight_dict[k]
+                                        for k, v in loss_dict_reduced.items() if k in weight_dict}
+            loss_dict_reduced_scaled = {k: v  for k, v in loss_dict_reduced.items()
+                                            if 'aux' not in k and '_1' not in k and '_2' not in k and '_3' not in k}
+            losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
+            loss_value = losses_reduced_scaled.item()
+            if not math.isfinite(loss_value):
+                print("Loss is {}, stopping training".format(loss_value))
+                print(loss_dict_reduced)
+                sys.exit(1)
 
         optimizer.zero_grad()
         losses.backward()
@@ -70,7 +71,7 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(grad_norm=grad_total_norm)
 
         # gather the stats from all processes
-        if debug_out_path and d_i in {0,50%n_dl, 150%n_dl ,n_dl//2, n_dl*4//5}:
+        if debug_out_path and d_i in {0,50%n_dl, 150%n_dl, 100%n_dl, n_dl//2, n_dl*4//5}:
             # utils.get_info()
             visualize_gt(data_dict, debug_out_path, d_i)
             train_visualize_pred(data_dict, outputs, debug_out_path, model.args.prob_detect, d_i)

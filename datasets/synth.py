@@ -28,6 +28,8 @@ def augment(patch, img_h=999, img_w=999):
         w,h = max(w,16), max(h,16)
         w,h = min(img_w//4,w), min(img_h//4,h)
         patch = cv2.resize(patch, (w,h))
+
+    assert patch.shape[1] / patch.shape[0] <10, patch.shape
     return patch
 
 def simulate(img, data):
@@ -55,7 +57,6 @@ def simulate(img, data):
 
         if torch.rand(1)>.5 and (min(coord)==0 or coord[0]>img.shape[1]-20 or coord[1]>img.shape[0]-20):
             data[i][3] = -1
-    
     return img, gt_bb, gt_idx
 
 
@@ -141,17 +142,19 @@ class SynthData(torch.utils.data.Dataset):
             inst.labels = torch.zeros_like(inst.obj_ids)
             gt_instances.append(inst)
 
-            if exemplar is None:
-                exemplar = [0,0]
-                x,y,w,h = gt_bb[-1]
-                exemplar[0] = images[-1][:, y-h//2:y+h//2, x-w//2:x+w//2]
-                exemplar[1] = inst.boxes[-1]
-
+            j=0
+            while exemplar is None:
+                j-=1
+                x,y,w,h = gt_bb[j]
+                exe = images[-1][:, y-h//2:y+h//2, x-w//2:x+w//2]
+                bb = inst.boxes[-1]
+                if exe.numel()>0 and max(exe.shape[1:])/min(exe.shape[1:])<5:
+                    exemplar = [exe,bb]
         return {
-        'imgs': images,
-        'gt_instances': gt_instances,
-        'exemplar': exemplar,
-    }
+            'imgs': images,
+            'gt_instances': gt_instances,
+            'exemplar': exemplar,
+        }
 
 
 def rotate_img(img, angle, bg_patch=(5,5)):

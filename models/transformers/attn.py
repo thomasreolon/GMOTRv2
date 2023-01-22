@@ -41,7 +41,7 @@ class MSDeformAttn(nn.Module):
         self.attention_weights = nn.ModuleList([
             nn.Linear(d_model,d_model, bias=False) for _ in range(n_heads * (n_levels+1))
         ])
-        self.value_proj = nn.ModuleList([ nn.Linear(d_model, d_model) for _ in range(n_heads * 2) ])
+        self.value_proj = nn.ModuleList([ nn.Linear(d_model, d_model) for _ in range(n_heads * 2 * (n_levels+1)) ])
         self.head_mixer = nn.Linear(self.n_heads+1, self.d_model, bias=False)
 
         self._reset_parameters()
@@ -92,6 +92,7 @@ class MSDeformAttn(nn.Module):
                 'Last dim of reference_points must be 2 or 4, but get {} instead.'.format(reference_points.shape[-1]))
 
         # attention
+        if add_keys is not None: add_keys=add_keys.view(-1,self.d_model)
         keys = self.get_keys(sampling_locations, input_flatten, input_spatial_shapes, input_level_start_index).view(
             N*Len_q, self.n_heads, self.n_levels, self.n_points, self.d_model
         )
@@ -101,26 +102,24 @@ class MSDeformAttn(nn.Module):
         for h in range(self.n_heads): # (Q@W@K.T) (W@K).T
             # similarity queries/pixels
             attn_matrix = []
+            values = []
             for lvl in range(self.n_levels+1):
                 simil = self.attention_weights[h*self.n_levels+lvl].weight
                 if lvl != self.n_levels:
+                    val = self.value_proj[h*self.n_levels+lvl](keys[h, lvl].view(-1,self.d_model)).view(self.n_points, N*Len_q, self.d_model)
                     ki = simil @ keys[h, lvl].view(-1,self.d_model).T
                     ki = ki.view(self.n_points, N*Len_q, self.d_model)
                     attn = (ki * query.view(-1,self.d_model)[None]).sum(dim=-1) #n_points,N
                 elif add_keys is not None:
-                    ki = add_keys.view(-1,self.d_model) @ simil.T
+                    val = self.value_proj[h*self.n_levels+lvl](add_keys).view(len(add_keys), 1, self.d_model).expand(-1,N*Len_q,-1)
+                    ki = add_keys @ simil.T
                     attn = ki @ query.view(-1,self.d_model).T  # X,N
                 else: continue
                 attn_matrix.append(attn)
+                values.append(val)
             attn_matrix = (torch.cat(attn_matrix, dim=0) / math.sqrt(self.d_model) ).softmax(dim=0)  #lvls*n_points+X, N
-
             # output as linear proj of pixels
-            values = self.value_proj[h*2]  (keys[h].view(-1,self.d_model))   # lvls*n_points, dim
-            values = values.view(self.n_levels*self.n_points, N*Len_q, self.d_model)
-            if add_keys is not None:
-                v2 = self.value_proj[1+h*2](add_keys.view(-1, self.d_model)) # X, dim
-                v2 = v2[:,None].expand(-1,N*Len_q,-1)
-                values = torch.cat((values,v2), dim=0)                 # lvls*n_points+X, N, dim
+            values = torch.cat(values)# lvls*n_points+X, N, dim
             # values weighted to attn_matrix
             result = result + (attn_matrix[:,:,None] * values).sum(dim=0) * head_w[None, h]
         return result[None]
@@ -164,7 +163,7 @@ class DeformableTransformer(nn.Module):
 
         decoder_layer = DeformableTransformerDecoderLayer(d_model, dim_feedforward,
                                                           dropout, activation,
-                                                          num_feature_levels, nhead, dec_n_points, decoder_self_cross,
+                                                          num_feature_levels, 8, dec_n_points, decoder_self_cross,
                                                           sigmoid_attn=sigmoid_attn, extra_track_attn=extra_track_attn,
                                                           memory_bank=memory_bank)
         self.decoder = DeformableTransformerDecoder(decoder_layer, num_decoder_layers, return_intermediate_dec)
@@ -375,7 +374,7 @@ class DeformableTransformerEncoder(nn.Module):
         output = src
         reference_points = self.get_reference_points(spatial_shapes, valid_ratios, device=src.device)
         for i, layer in enumerate(self.layers):
-            add = add_keys[:,[0,-2]] if i==0 else None
+            add = add_keys[:,[0,-2]]
             output = layer(output, pos, reference_points, spatial_shapes, level_start_index, padding_mask, add)
 
         return output
@@ -545,9 +544,8 @@ class DeformableTransformerDecoder(nn.Module):
                 assert reference_points.shape[-1] == 2
                 reference_points_input = reference_points[:, :, None] * src_valid_ratios[:, None]
             query_pos = pos2posemb(reference_points)
-            add = add_keys[:,[1,-2]] if lid==0 else add_keys[:,[2,4]]
             output = layer(output, query_pos, reference_points_input, src, src_spatial_shapes,
-                           src_level_start_index, src_padding_mask, mem_bank, mem_bank_pad_mask, attn_mask, add)
+                           src_level_start_index, src_padding_mask, mem_bank, mem_bank_pad_mask, attn_mask, add_keys)
 
             # hack implementation for iterative bounding box refinement
             if self.bbox_embed is not None:

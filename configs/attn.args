@@ -1,7 +1,7 @@
 --meta_arch deformable_attn
 --num_queries 100
 
---nheads 2
---dec_layers 3
---enc_layers 2
+--nheads 1
+--dec_layers 6
+--enc_layers 1
 --enc_n_points 2

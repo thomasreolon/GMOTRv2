@@ -669,9 +669,9 @@ class MOTR(nn.Module):
     @torch.no_grad()
     def inference_single_image(self, img, ori_img_size, track_instances=None, exemplar=None):
         if not isinstance(img, NestedTensor):
-            img = nested_tensor_from_tensor_list(img)
+            img = nested_tensor_from_tensor_list([img])
         if not isinstance(exemplar, NestedTensor):
-            exemplar = nested_tensor_from_tensor_list(exemplar)
+            exemplar = nested_tensor_from_tensor_list([exemplar])
 
         if track_instances is None:
             track_instances = self._generate_empty_tracks()
@@ -723,7 +723,7 @@ class MOTR(nn.Module):
                 def fn(frame, exemplar, gtboxes, *args):
                     frame = nested_tensor_from_tensor_list([frame])
                     if not self.args.extract_exe_from_img:
-                        exemplar = nested_tensor_from_tensor_list([exemplar], 64)
+                        exemplar = nested_tensor_from_tensor_list([exemplar])
                     tmp = Instances((1, 1), **dict(zip(keys, args)))
                     frame_res = self._forward_single_image(frame, exemplar, tmp, gtboxes)
                     return (
@@ -750,7 +750,7 @@ class MOTR(nn.Module):
             else:
                 frame = nested_tensor_from_tensor_list([frame])
                 if not self.args.extract_exe_from_img:
-                    exemplar = nested_tensor_from_tensor_list([exemplar], 64)
+                    exemplar = nested_tensor_from_tensor_list([exemplar])
                 frame_res = self._forward_single_image(frame, exemplar, track_instances, gtboxes)
             frame_res = self._post_process_single_image(frame_res, track_instances, is_last) # TODO do it inside of checkpoint
 

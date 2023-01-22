@@ -113,11 +113,11 @@ class FSCDataset(Dataset):
         crop = img[:, bb[1]:bb[3], bb[0]:bb[2]]
 
         # check goodness of patch
-        max_dim = torch.tensor([max(*crop.shape[1:])],dtype=float)
+        min_dim = torch.tensor([min(*crop.shape)],dtype=float)
         if len(target['boxes'])==p+1:
             # emergence
             crop = img[:, bb[1]:bb[1]+4, bb[0]:bb[0]+4]
-        elif max_dim==0:
+        elif min_dim==0 or max(crop.shape[1:])/min(crop.shape[1:])>5:
             # get next box in case of errors
             return self.get_exemplar(img, target, p+1)
         return [crop, bbnorm]

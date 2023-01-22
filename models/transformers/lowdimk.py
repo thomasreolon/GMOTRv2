@@ -153,7 +153,7 @@ class MSDeformAttn(nn.Module):
 
         last_fmap = input_level_start_index[-1]
         value = self.value_proj(input_flatten[:,:last_fmap])
-        value2 = self.value_proj(input_flatten[:,last_fmap:])
+        value2 = self.value_proj2(input_flatten[:,last_fmap:])
         value = torch.cat((value, value2), dim=1)
         if input_padding_mask is not None:
             value.masked_fill_(input_padding_mask[..., None], float(0))
@@ -224,7 +224,7 @@ class DeformableTransformer(nn.Module):
 
         decoder_layer = DeformableTransformerDecoderLayer(d_model, dim_feedforward,
                                                           dropout, activation,
-                                                          num_feature_levels, nhead, dec_n_points, decoder_self_cross,
+                                                          num_feature_levels, 8, dec_n_points, decoder_self_cross,
                                                           sigmoid_attn=sigmoid_attn, extra_track_attn=extra_track_attn,
                                                           memory_bank=memory_bank)
         self.decoder = DeformableTransformerDecoder(decoder_layer, num_decoder_layers, return_intermediate_dec)
