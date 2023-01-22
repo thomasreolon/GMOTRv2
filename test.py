@@ -126,21 +126,23 @@ class ListImgDataset(Dataset):
                 self.e = img[:, bb[1]:bb[3], bb[0]:bb[2]]
                 self.e = F.resize(self.e, (int(self.e.shape[1]*r), int(self.e.shape[2]*r)))
             img = F.resize(img, (int(img.shape[1]*r), int(img.shape[2]*r)))
+            bb = torch.tensor([(bb[0]+bb[2])//2/ori_img.shape[1], (bb[1]+bb[3])//2/ori_img.shape[0], (bb[2]-bb[0])/ori_img.shape[1], (bb[3]-bb[1])/ori_img.shape[0]])
         else:
             # bb as a Tensor
             img = fpath_or_ndarray
             if self.e is None:
                 self.e = self.exemplar
             ori_img = np.array(img.permute(1,2,0))*self.std +self.mean
+            bb=None
         assert ori_img is not None
-        return ori_img, img, self.e
+        return ori_img, img, self.e, bb
 
     def __len__(self):
         return len(self.img_list)
     
     def __getitem__(self, index):
-        ori_img, img, exemplar = self.load_img_from_file(self.img_list[index])
-        return ori_img, img, exemplar
+        ori_img, img, exemplar, bb = self.load_img_from_file(self.img_list[index])
+        return ori_img, img, exemplar, bb
 
 
 
@@ -162,15 +164,15 @@ class Detector(object):
         loader = DataLoader(ListImgDataset(*self.dataset[video]), 1, num_workers=2)
         lines = []
         track_instances = None
-        for i, (ori_img, cur_img, exemplar) in enumerate(tqdm(loader)):
-            ori_img, cur_img, exemplar = ori_img[0].numpy()[:,:,::-1], cur_img[0], exemplar[0]
+        for i, (ori_img, cur_img, exemplar, bb) in enumerate(tqdm(loader)):
+            ori_img, cur_img, exemplar, bb = ori_img[0].numpy()[:,:,::-1], cur_img[0], exemplar[0], bb[0]
             # predict
-            cur_img, exemplar = cur_img.to(self.args.device), exemplar.to(self.args.device)
+            cur_img, exemplar, bb = cur_img.to(self.args.device), exemplar.to(self.args.device), bb.to(self.args.device)
 
             seq_h, seq_w, _ = ori_img.shape
 
             # predict & keep > thresh
-            track_instances = self.gmot.inference_single_image([cur_img], (seq_h, seq_w), track_instances, [exemplar])
+            track_instances = self.gmot.inference_single_image(cur_img, (seq_h, seq_w), track_instances, exemplar, bb)
 
             # save predictions
             ori_img = (ori_img-ori_img.min())/(ori_img.max()-ori_img.min())*255
@@ -184,11 +186,12 @@ class Detector(object):
 
 
 def load_for_eval(args):
-    ARCHITECTURE = ['meta_arch', 'with_box_refine', 'two_stage', 'accurate_ratio', 'num_anchors', 'backbone', 'enable_fpn',  'position_embedding', 'num_feature_levels', 'enc_layers', 'dim_feedforward', 'num_queries', 'hidden_dim', 'dec_layers',  'nheads', 'enc_n_points', 'dec_n_points', 'decoder_cross_self', 'extra_track_attn', 'loss_normalizer']
+    ARCHITECTURE = ['use_exe_query', 'extract_exe_from_img', 'meta_arch', 'with_box_refine', 'two_stage', 'accurate_ratio', 'num_anchors', 'backbone', 'enable_fpn',  'position_embedding', 'num_feature_levels', 'enc_layers', 'dim_feedforward', 'num_queries', 'hidden_dim', 'dec_layers',  'nheads', 'enc_n_points', 'dec_n_points', 'decoder_cross_self', 'extra_track_attn', 'loss_normalizer']
     checkpoint = torch.load(args.resume, map_location='cpu')
     if 'args' in checkpoint:
         old_args = checkpoint['args']
         for k in ARCHITECTURE:
+            if k not in old_args.__dict__:continue
             args.__dict__[k] = old_args.__getattribute__(k)
     
     msg = f'loading {args.resume},:     {checkpoint["args"].meta_arch} {checkpoint["args"].dec_layers}         epochs: {checkpoint["epoch"]}'

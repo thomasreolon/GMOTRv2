@@ -667,11 +667,13 @@ class MOTR(nn.Module):
         return frame_res
 
     @torch.no_grad()
-    def inference_single_image(self, img, ori_img_size, track_instances=None, exemplar=None):
+    def inference_single_image(self, img, ori_img_size, track_instances=None, exemplar=None, exe_bb=None):
         if not isinstance(img, NestedTensor):
             img = nested_tensor_from_tensor_list([img])
-        if not isinstance(exemplar, NestedTensor):
+        if not isinstance(exemplar, NestedTensor) and not self.args.extract_exe_from_img:
             exemplar = nested_tensor_from_tensor_list([exemplar])
+        else:
+            exemplar = exe_bb
 
         if track_instances is None:
             track_instances = self._generate_empty_tracks()
