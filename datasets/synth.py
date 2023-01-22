@@ -132,7 +132,7 @@ class SynthData(torch.utils.data.Dataset):
         # simulate movement
         images = []
         gt_instances = []
-        for i in range(8):
+        for i in range(self.args.sampler_lengths[0]):
             img, gt_bb, gt_idx = simulate(base_bg.copy(), data)
             images.append(F.normalize(F.to_tensor(img[:,:,::-1]/255), (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)).float())
             inst = Instances((1,1))
