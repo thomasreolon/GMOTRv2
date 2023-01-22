@@ -148,16 +148,14 @@ def main(args):
         debug_out_path = f'{output_dir}/debug/{epoch}/' if args.debug else None
         if args.distributed:
             sampler_train.set_epoch(epoch)
-        try:
-            train_one_epoch_mot(model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, debug_out_path)
-        except KeyboardInterrupt: print('CTRL-C --> exit()') ; utils.save_on_master({ 'model': model_without_ddp.state_dict(), 'optimizer': optimizer.state_dict(), 'lr_scheduler': lr_scheduler.state_dict(), 'epoch': epoch-1, 'args': args}, output_dir / 'interrupted.pth');exit()
+        train_one_epoch_mot(model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm, debug_out_path)
     
         lr_scheduler.step()
         if args.output_dir:
-            checkpoint_paths = [output_dir / 'checkpoint.pth']
+            checkpoint_paths = [output_dir / f'checkpoint_{args.dec_layers}_{args.meta_arch}_{args.extract_exe_from_img}.pth']
             # extra checkpoint before LR drop and every 5 epochs
             if (epoch + 1) % args.lr_drop == 0 or args.epochs-1==epoch or (epoch + 1) % args.save_period == 0 or (((args.epochs >= 100 and (epoch + 1) > 100) or args.epochs < 100) and (epoch + 1) % 5 == 0):
-                checkpoint_paths.append(output_dir / f'checkpoint_{args.dec_layers}_{args.meta_arch}.pth')
+                checkpoint_paths.append(output_dir / f'checkpoint.pth')
             for checkpoint_path in checkpoint_paths:
                 utils.save_on_master({
                     'model': model_without_ddp.state_dict(),

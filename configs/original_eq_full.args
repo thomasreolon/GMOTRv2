@@ -2,6 +2,3 @@
 --num_queries 100
 
 --extract_exe_from_img
---use_exe_query
-
---resume /home/intern/Desktop/GMOTRv2/outputs/checkpoint.pth
