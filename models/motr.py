@@ -32,7 +32,7 @@ from .matcher import build_matcher
 from .transformers import build_deforamble_transformer
 from .qim import pos2posemb, build as build_query_interaction_layer
 from .detr_loss import SetCriterion, MLP, sigmoid_focal_loss
-
+from .bmn.models import build_model as build_bmn
 
 class ClipMatcher(SetCriterion):
     def __init__(self, num_classes,
@@ -382,6 +382,8 @@ class MOTR(nn.Module):
         """
         super().__init__()
         self.args = args
+        q_per_row = int(math.sqrt(args.num_queries))
+        args.num_queries = q_per_row**2
         self.num_queries = args.num_queries
         self.track_embed = track_embed
         self.transformer = transformer
@@ -392,12 +394,15 @@ class MOTR(nn.Module):
         self.num_feature_levels = args.num_feature_levels
         self.use_checkpoint = args.use_checkpoint
         self.query_denoise = args.query_denoise
-        self.position = nn.Embedding(args.num_queries, 4)
-        self.yolox_embed = nn.Embedding(1, hidden_dim)
-        self.query_embed = nn.Embedding(args.num_queries, hidden_dim)
-        self.query_exemplar = nn.Linear(4, hidden_dim)
+
+        grid = torch.stack(torch.meshgrid(.5+torch.arange(q_per_row)/q_per_row, .5+torch.arange(q_per_row)/q_per_row),dim=2).view(-1,2)
+        self.q_refs = nn.Parameter(torch.cat((grid, .02+.1*torch.rand(args.num_queries, 2)), dim=1))
+        self.q_emb = nn.Parameter(torch.rand(1, hidden_dim).expand(args.num_queries, -1))
+        self.prop_embed = nn.Parameter(torch.rand(1, hidden_dim))
         if args.query_denoise:
-            self.refine_embed = nn.Embedding(1, hidden_dim)
+            self.refine_embed = nn.Parameter(torch.rand(1, hidden_dim))
+
+        self.bmn = build_bmn(args.bmn_pretrained)
         if args.num_feature_levels > 1:
             num_backbone_outs = len(backbone.strides)
             input_proj_list = []
@@ -433,7 +438,6 @@ class MOTR(nn.Module):
         for proj in self.input_proj:
             nn.init.xavier_uniform_(proj[0].weight, gain=1)
             nn.init.constant_(proj[0].bias, 0)
-        nn.init.uniform_(self.position.weight.data, 0, 1)
 
         # if two-stage, the last class_embed and bbox_embed is for region proposal generation
         num_pred = (transformer.decoder.num_layers + 1) if args.two_stage else transformer.decoder.num_layers
@@ -459,16 +463,14 @@ class MOTR(nn.Module):
         self.memory_bank = args.memory_bank_type
         self.mem_bank_len = 0 if args.memory_bank_type is None else self.memory_bank.max_his_length
 
-    def _generate_empty_tracks(self, proposals=None):
+    def _generate_empty_tracks(self):
         track_instances = Instances((1, 1))
-        _, d_model = self.query_embed.weight.shape  # (300, 512)
-        device = self.query_embed.weight.device
-        if proposals is None:
-            track_instances.ref_pts = self.position.weight
-            track_instances.query_pos = self.query_embed.weight
-        else:
-            track_instances.ref_pts = torch.cat([self.position.weight, proposals[:, :4]])
-            track_instances.query_pos = torch.cat([self.query_embed.weight, pos2posemb(proposals[:, 4:], d_model) + self.yolox_embed.weight])
+        _, d_model = self.q_emb.shape  # (300, 512)
+        device = self.q_emb.device
+
+        track_instances.ref_pts = self.q_refs
+        track_instances.query_pos = self.q_emb
+
         track_instances.output_embedding = torch.zeros((len(track_instances), d_model), device=device)
         track_instances.obj_idxes = torch.full((len(track_instances),), -1, dtype=torch.long, device=device)
         track_instances.matched_gt_idxes = torch.full((len(track_instances),), -1, dtype=torch.long, device=device)
@@ -484,7 +486,7 @@ class MOTR(nn.Module):
         track_instances.mem_padding_mask = torch.ones((len(track_instances), mem_bank_len), dtype=torch.bool, device=device)
         track_instances.save_period = torch.zeros((len(track_instances), ), dtype=torch.float32, device=device)
 
-        return track_instances.to(self.query_embed.weight.device)
+        return track_instances
 
     def clear(self):
         self.track_base.clear()
@@ -532,60 +534,60 @@ class MOTR(nn.Module):
         pos.append(torch.zeros_like(exefeatures))
 
 
-        ## Add GT to guide Learning
+        ## prepare input for transformer
+        query_embed = track_instances.query_pos
+        ref_pts = track_instances.ref_pts
+        attn_mask = None
+
+        # proposals from agnostic counting
+        proposed = self._get_proposals(samples.tensors, exemplar.tensors)
+        if proposed is not None:
+            pr_tgt = self.prop_embed.expand(proposed.size(0), -1)
+            query_embed = torch.cat([pr_tgt, query_embed])
+            ref_pts = torch.cat([proposed, ref_pts])
+
+        # Add GT to guide Learning
         if gtboxes is not None:
-            n_dt = len(track_instances)
-            ps_tgt = self.refine_embed.weight.expand(gtboxes.size(0), -1)
-            query_embed = torch.cat([track_instances.query_pos, ps_tgt])
-            ref_pts = torch.cat([track_instances.ref_pts, gtboxes])
+            n_dt = len(query_embed)
+            ps_tgt = self.refine_embed.expand(gtboxes.size(0), -1)
+            query_embed = torch.cat([query_embed, ps_tgt])
+            ref_pts = torch.cat([ref_pts, gtboxes])
             attn_mask = torch.zeros((len(ref_pts), len(ref_pts)), dtype=bool, device=ref_pts.device)
             attn_mask[:n_dt, n_dt:] = True
-        else:
-            query_embed = track_instances.query_pos
-            ref_pts = track_instances.ref_pts
-            attn_mask = None
 
-        # ## Add BB_exemplar
-        # if self.args.extract_exe_from_img and self.args.use_exe_query:
-        #     ref_pts = torch.cat(((exemplar.view(1,4)).repeat(2,1), ref_pts))
-        #     query_embed = torch.cat([self.query_exemplar(exemplar.view(1,4))+exefeatures[0,:,[0,-1], [0,-1]].T, query_embed])
-        #     if attn_mask is not None:
-        #         attn_mask = torch.zeros((len(ref_pts), len(ref_pts)), dtype=bool, device=ref_pts.device)
-        #         attn_mask[:n_dt+1, 1+n_dt:] = True
 
         ## TRANSFORMER
-        hs, init_reference, inter_references, is_anchor, _ = \
+        hs, init_reference, inter_references, _, _ = \
             self.transformer(srcs, masks, pos, query_embed, ref_pts=ref_pts, attn_mask=attn_mask)
-
-        if is_anchor==3: ## anchor_transformer computes positions in its own code
-            hs, outputs_class, outputs_coord = hs, init_reference, inter_references
-        else:
-            ## Head
-            outputs_classes = []
-            outputs_coords = []
-            for lvl in range(hs.shape[0]):
-                if lvl == 0:
-                    reference = init_reference
-                else:
-                    reference = inter_references[lvl - 1]
-                reference = inverse_sigmoid(reference)
-                outputs_class = self.class_embed[lvl](hs[lvl])
-                tmp = self.bbox_embed[lvl](hs[lvl])
-                if reference.shape[-1] == 4:
-                    tmp += reference
-                else:
-                    assert reference.shape[-1] == 2
-                    tmp[..., :2] += reference
-                outputs_coord = tmp.sigmoid()
-                outputs_classes.append(outputs_class)
-                outputs_coords.append(outputs_coord)
-            outputs_class = torch.stack(outputs_classes)
-            outputs_coord = torch.stack(outputs_coords)
         
-        # if self.args.extract_exe_from_img and self.args.use_exe_query:
-        #     ## DROP BB exemplar (or keep if invent a new loss)
-        #     hs, outputs_class, outputs_coord = hs[:,:,1:], outputs_class[:,:,1:], outputs_coord[:,:,1:]
+        # remove proposed
+        if proposed is not None:
+            n_pr = proposed.size(0)
+            hs = hs[..., n_pr:, :]
+            init_reference = init_reference[..., n_pr:, :]
+            inter_references = inter_references[..., n_pr:, :]
 
+        ## Head
+        outputs_classes = []
+        outputs_coords = []
+        for lvl in range(hs.shape[0]):
+            if lvl == 0:
+                reference = init_reference
+            else:
+                reference = inter_references[lvl - 1]
+            reference = inverse_sigmoid(reference)
+            outputs_class = self.class_embed[lvl](hs[lvl])
+            tmp = self.bbox_embed[lvl](hs[lvl])
+            if reference.shape[-1] == 4:
+                tmp += reference
+            else:
+                assert reference.shape[-1] == 2
+                tmp[..., :2] += reference
+            outputs_coord = tmp.sigmoid()
+            outputs_classes.append(outputs_class)
+            outputs_coords.append(outputs_coord)
+        outputs_class = torch.stack(outputs_classes)
+        outputs_coord = torch.stack(outputs_coords)
 
         ## Outputs Dict
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
@@ -620,6 +622,70 @@ class MOTR(nn.Module):
                 exefeatures.append(esrc[:,:,hc,wc])
         exefeatures = torch.stack(exefeatures, dim=-1).view(b,c,-1,3)
         return exefeatures
+
+    def _get_proposals(self, image, exemplar):
+        device = image.device
+        # resize image
+        w,h = 512, 512*image.shape[2]//image.shape[3]
+        r = w / image.shape[2]
+        image = F.adaptive_avg_pool2d(image, (h,w))
+
+        we,he = int(exemplar.shape[3]*r), int(exemplar.shape[2]*r)
+        exemplar =F.adaptive_avg_pool2d(exemplar, (he,we))
+
+        # calculate scale
+        scale = exemplar.shape[3] / image.shape[3] * 0.5 + exemplar.shape[2] / image.shape[3] * 0.5 
+        scale = scale // (0.5 / 20)
+        scale = scale if scale < 20 - 1 else 20 - 1
+        patch = {'scale_embedding':torch.tensor([[scale]], device=device).int(), 'patches':exemplar[:,None]}
+
+        # get proposals
+        res = self.bmn(image, patch, True)
+        interest = res['density_map'][0,0] ## H,W
+
+        # generate q_refs from proposals
+        good_pixels1 = torch.zeros_like(interest).bool()
+        c1 = interest[:-1, :] >= interest[1: , :]  # bigger than up
+        c2 = interest[1: , :] >  interest[:-1, :]  # bigger than down
+        c3 = interest[:, :-1] >= interest[:, 1: ]  # bigger than left
+        c4 = interest[:, 1: ] >  interest[:, :-1]  # bigger than right
+
+        good_pixels1[1:-1, 1:-1] = c1[1:, 1:-1] & c2[:-1, 1:-1] & c3[1:-1, 1:] & c4[1:-1, :-1]
+        good_pixels2 = interest > interest.mean()+interest.std()*0.84   # top 20%
+        if not (good_pixels1 & good_pixels2).any(): return None
+        good_pixels = (good_pixels1 & good_pixels2).nonzero(as_tuple=True)
+        xy = torch.stack((good_pixels[-1], good_pixels[-2]), dim=1).float()
+        xy = xy / torch.tensor([w,h],device=device).view(1,2)
+
+        bb = torch.tensor([[exemplar.shape[3]/image.shape[3],  exemplar.shape[2]/image.shape[2]]], device=device).expand(xy.shape[0], -1)
+
+
+        # import cv2
+        # tmp = image.cpu()[0].permute(1,2,0).numpy()[:,:,::-1]
+        # tmp = (tmp-tmp.min()) / (tmp.max()-tmp.min())
+
+        # for coord in xy:
+        #     x = int(coord[0]*tmp.shape[1]) 
+        #     y = int(coord[1]*tmp.shape[0])
+        #     tmp[y,x] = (0,0,1.)
+        #     tmp[y+1,x+1] = (0,0,1.)
+        #     tmp[y-1,x+1] = (0,0,1.)
+        #     tmp[y-1,x-1] = (0,0,1.)
+        #     tmp[y+1,x-1] = (0,0,1.)
+        # cv2.imshow('img', tmp)
+
+        # tmp = exemplar.cpu()[0].permute(1,2,0).numpy()[:,:,::-1]
+        # tmp = (tmp-tmp.min()) / (tmp.max()-tmp.min())
+        # cv2.imshow('exe', tmp)
+
+        # tmp = res['density_map'].cpu()[0].permute(1,2,0).numpy()
+        # tmp = (tmp-tmp.min()) / (tmp.max()-tmp.min())
+        # cv2.imshow('interest', tmp)
+        # cv2.waitKey()
+
+
+        return torch.cat((xy,bb),dim=1)  # Nx4
+
 
     def _post_process_single_image(self, frame_res, track_instances, is_last):
         if self.query_denoise > 0:
@@ -670,7 +736,7 @@ class MOTR(nn.Module):
     def inference_single_image(self, img, ori_img_size, track_instances=None, exemplar=None, exe_bb=None):
         if not isinstance(img, NestedTensor):
             img = nested_tensor_from_tensor_list([img])
-        if not isinstance(exemplar, NestedTensor) and not self.args.extract_exe_from_img:
+        if not isinstance(exemplar, NestedTensor):
             exemplar = nested_tensor_from_tensor_list([exemplar])
         else:
             exemplar = exe_bb
@@ -724,8 +790,7 @@ class MOTR(nn.Module):
             if self.use_checkpoint and frame_index < len(frames) - 1:
                 def fn(frame, exemplar, gtboxes, *args):
                     frame = nested_tensor_from_tensor_list([frame])
-                    if not self.args.extract_exe_from_img:
-                        exemplar = nested_tensor_from_tensor_list([exemplar])
+                    exemplar = nested_tensor_from_tensor_list([exemplar])
                     tmp = Instances((1, 1), **dict(zip(keys, args)))
                     frame_res = self._forward_single_image(frame, exemplar, tmp, gtboxes)
                     return (
@@ -751,8 +816,7 @@ class MOTR(nn.Module):
                 }
             else:
                 frame = nested_tensor_from_tensor_list([frame])
-                if not self.args.extract_exe_from_img:
-                    exemplar = nested_tensor_from_tensor_list([exemplar])
+                exemplar = nested_tensor_from_tensor_list([exemplar])
                 frame_res = self._forward_single_image(frame, exemplar, track_instances, gtboxes)
             frame_res = self._post_process_single_image(frame_res, track_instances, is_last) # TODO do it inside of checkpoint
 

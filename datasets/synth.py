@@ -72,10 +72,16 @@ class SynthData(torch.utils.data.Dataset):
         images  = [x for x in os.listdir(dir_path) if x != 'bg']
         for folder in images:
             crops = []
-            bg = cv2.imread(dir_path+'/bg/'+folder)
             for img in os.listdir(dir_path+'/'+folder):
                 img = cv2.imread(dir_path+'/'+folder+'/'+img)
                 crops.append(img)
+            
+            if os.path.exists(dir_path+'/bg/'+folder):
+                bg = cv2.imread(dir_path+'/bg/'+folder)
+            else:
+                bg = (((img[0,0]*.999 + img[0,-1]) + img[-1,-1]) + img[-1,0])/4
+                bg = np.uint8(bg.reshape(1,1,-1).repeat(600,axis=0).repeat(800,axis=1))
+            
             samples.append((bg, crops))
         self.samples = samples
 

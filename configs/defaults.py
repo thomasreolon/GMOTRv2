@@ -17,6 +17,7 @@ def get_args_parser():
     parser.add_argument('--output_dir', default='./outputs/',
                         help='path where to save, empty for no saving')
 
+    parser.add_argument('--bmn_pretrained', default=None, type=str)
 
 
     parser.add_argument('--mot20_path', default='/data/Dataset/mot', type=str)
