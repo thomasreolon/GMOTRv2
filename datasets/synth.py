@@ -91,15 +91,15 @@ class SynthData(torch.utils.data.Dataset):
         self.bgs = bgs
 
     def __len__(self):
-        return 1000
+        return 50 if self.args.small_dataset else 1000
 
     def __getitem__(self, idx):
         bg_idx = (idx*2999) % len(self.bgs)
-        idx = idx % len(self.samples)
+        s_idx = idx % len(self.samples)
         d_idx = idx-1  - (idx*421) % (len(self.samples)-1)
         
         bg = self.bgs[bg_idx]
-        base_bg, crops = self.samples[idx]
+        base_bg, crops = self.samples[s_idx]
         # get a random bg with similar pattern colors to original
         a,b,c,d = (1+torch.rand(4)*min(bg.shape[:2])/5).int()
         bg = bg[a:-b, c:-d]
@@ -121,9 +121,9 @@ class SynthData(torch.utils.data.Dataset):
         base_v = get_movement(base_bg, 0.02)
         for i, patch in enumerate(crops):
             coord = [int(torch.rand(1)*base_bg.shape[1]), int(torch.rand(1)*base_bg.shape[0])]
-            velocity = get_movement(base_bg, 0.1)
+            velocity = get_movement(base_bg, 0.05)
             if i<2: coord=None
-            data.append([patch, coord, [base_v[0]+velocity[0], base_v[1]+velocity[1]], i])
+            data.append([patch, coord, [base_v[0]+velocity[0], base_v[1]+velocity[1]], idx*1000 + i])
 
         # exemplar
         exemplar = None

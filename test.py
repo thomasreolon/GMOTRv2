@@ -153,7 +153,6 @@ class Detector(object):
         self.dataset = dataset  # list of tuples: (/path/to/MOT/vidname, )
 
         self.predict_path = os.path.join(self.args.output_dir, 'predictions', str(args.meta_arch)+str(args.dec_layers))
-        shutil.rmtree(self.predict_path, ignore_errors=True)
         os.makedirs(self.predict_path, exist_ok=True)
 
     @torch.no_grad()
@@ -176,7 +175,7 @@ class Detector(object):
 
             # save predictions
             ori_img = (ori_img-ori_img.min())/(ori_img.max()-ori_img.min())*255
-            show = i%(len(loader)//5)==0 and self.args.debug
+            show = (i%(len(loader)//5)==0 or i in list(range(50,60))) and self.args.debug
             lines += visualize_pred(track_instances, ori_img, self.predict_path, f'vid{v_name}_fr{i}', i, self.args.prob_detect, show)            
 
         with open(os.path.join(self.predict_path, f'{v_name}.txt'), 'w') as f:

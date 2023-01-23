@@ -545,13 +545,13 @@ class MOTR(nn.Module):
             ref_pts = track_instances.ref_pts
             attn_mask = None
 
-        ## Add BB_exemplar
-        if self.args.extract_exe_from_img and self.args.use_exe_query:
-            ref_pts = torch.cat(((exemplar.view(1,4)).repeat(2,1), ref_pts))
-            query_embed = torch.cat([self.query_exemplar(exemplar.view(1,4))+exefeatures[0,:,[0,-1], [0,-1]].T, query_embed])
-            if attn_mask is not None:
-                attn_mask = torch.zeros((len(ref_pts), len(ref_pts)), dtype=bool, device=ref_pts.device)
-                attn_mask[:n_dt+1, 1+n_dt:] = True
+        # ## Add BB_exemplar
+        # if self.args.extract_exe_from_img and self.args.use_exe_query:
+        #     ref_pts = torch.cat(((exemplar.view(1,4)).repeat(2,1), ref_pts))
+        #     query_embed = torch.cat([self.query_exemplar(exemplar.view(1,4))+exefeatures[0,:,[0,-1], [0,-1]].T, query_embed])
+        #     if attn_mask is not None:
+        #         attn_mask = torch.zeros((len(ref_pts), len(ref_pts)), dtype=bool, device=ref_pts.device)
+        #         attn_mask[:n_dt+1, 1+n_dt:] = True
 
         ## TRANSFORMER
         hs, init_reference, inter_references, is_anchor, _ = \
@@ -582,9 +582,9 @@ class MOTR(nn.Module):
             outputs_class = torch.stack(outputs_classes)
             outputs_coord = torch.stack(outputs_coords)
         
-        if self.args.extract_exe_from_img and self.args.use_exe_query:
-            ## DROP BB exemplar (or keep if invent a new loss)
-            hs, outputs_class, outputs_coord = hs[:,:,1:], outputs_class[:,:,1:], outputs_coord[:,:,1:]
+        # if self.args.extract_exe_from_img and self.args.use_exe_query:
+        #     ## DROP BB exemplar (or keep if invent a new loss)
+        #     hs, outputs_class, outputs_coord = hs[:,:,1:], outputs_class[:,:,1:], outputs_coord[:,:,1:]
 
 
         ## Outputs Dict

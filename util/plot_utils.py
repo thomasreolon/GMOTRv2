@@ -185,13 +185,13 @@ def visualize_gt(data_dict, output_dir, i=0):
         H,W,_ = img.shape
         def clean(x,X): return int(max(0,min(x, X-1)))
         if gt is not None:
-            for box in gt.boxes:
+            for box, idx in zip(gt.boxes, gt.obj_ids):
                 box = (box.view(2,2) * torch.tensor([W, H], device=box.device).view(1,2)).int()
                 x1,x2 = box[0,0] - box[1,0].div(2,rounding_mode='trunc'), box[0,0] + box[1,0].div(2,rounding_mode='trunc')
                 y1,y2 = box[0,1] - box[1,1].div(2,rounding_mode='trunc'), box[0,1] + box[1,1].div(2,rounding_mode='trunc')
                 x1,x2,y1,y2 = clean(x1,W),clean(x2,W),clean(y1,H),clean(y2,H)
                 tmp = img[y1+1:y2-1, x1+1:x2-1].copy()
-                img[y1:y2+1, x1:x2+1] = (255,0,255)
+                img[y1:y2+1, x1:x2+1] = tuple([(((5+idx.item()*3)*4909 % p)%256) for p in (3001, 1109, 2027)])
                 img[y1+1:y2-1, x1+1:x2-1] = tmp
         imgs.append(img)
     imgs += [200*np.ones_like(img) for _ in range(whites_to_add)]

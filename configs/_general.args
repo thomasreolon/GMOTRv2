@@ -1,13 +1,13 @@
 --dataset_file e2e_synth
 
---epochs 30
+--epochs 10
 
---lr 2e-4
+--lr 2e-5
 --lr_drop 25
---lr_backbone 2e-5
+--lr_backbone 1e-5
 --batch_size 1
 --sample_mode random_interval
---sample_interval 10
+--sample_interval 6
 --sampler_lengths 5
 --merger_dropout 0
 --dropout 0
