@@ -177,7 +177,6 @@ class ClipMatcher(SetCriterion):
         corr_map = outputs['corr'].view(*self.corr_hw)      #H,W
         density_map = outputs['dmap'][0,0]   #H,W
 
-
         # density loss
         count_map = torch.zeros_like(density_map)
         std = 20 # boxes[:,2:].mean().item() * min(count_map.shape)
@@ -192,9 +191,9 @@ class ClipMatcher(SetCriterion):
         # correlation loss
         count_map = F.adaptive_avg_pool2d(count_map[None], self.corr_hw).view(self.corr_hw)
         positive = count_map > count_map.mean()+count_map.std()
+        corr_map = (corr_map-corr_map.mean()) / (corr_map.std()+1e-8)
         corr_map = corr_map.exp()
         corr_loss = - ( corr_map[positive].sum() / (corr_map.sum()+1e-10) ).log()
-
 
         return 0.2*corr_loss, density_loss*1e5
 
@@ -347,7 +346,7 @@ class ClipMatcher(SetCriterion):
                     {'frame_{}_ps{}_{}'.format(self._current_frame_idx, i, key): value for key, value in
                         l_dict.items()})
         
-        if 'corr' in outputs:
+        if outputs['corr'] is not None:
             cr_loss, cn_loss = self.loss_count(outputs, gt_instances_i)
             self.losses_dict.update({
                 f'corr_loss_frame_{self._current_frame_idx}':cr_loss, 
@@ -657,9 +656,8 @@ class MOTR(nn.Module):
 
         ## Outputs Dict
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
-        if corr is not None:
-            out['dmap'] = dmap
-            out['corr'] = corr
+        out['dmap'] = dmap
+        out['corr'] = corr
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
         out['hs'] = hs[-1]
@@ -822,6 +820,8 @@ class MOTR(nn.Module):
         return track_instances
 
     def forward(self, data: dict, track_instances=None):
+        # print('-------------------')
+        # print(torch.cat([x.view( -1) for x in self.bmn.refiner.parameters() ] ).mean())
         if self.training:
             self.criterion.initialize_for_single_clip(data['gt_instances'])
         frames = data['imgs']  # list of Tensor.
@@ -859,14 +859,14 @@ class MOTR(nn.Module):
                     exemplar = nested_tensor_from_tensor_list([exemplar])
                     tmp = Instances((1, 1), **dict(zip(keys, args)))
                     frame_res = self._forward_single_image(frame, exemplar, tmp, gtboxes)
+                    closs = (frame_res['dmap'], frame_res['corr']) if frame_res['dmap'] is not None else ()
                     return (
                         frame_res['pred_logits'],
                         frame_res['pred_boxes'],
                         frame_res['hs'],
                         *[aux['pred_logits'] for aux in frame_res['aux_outputs']],
                         *[aux['pred_boxes'] for aux in frame_res['aux_outputs']],
-                        frame_res['dmap'], frame_res['corr'],
-                    )
+                    ) + closs
 
                 args = [frame, exemplar, gtboxes] + [track_instances.get(k) for k in keys]
                 params = tuple((p for p in self.parameters() if p.requires_grad))
@@ -880,7 +880,8 @@ class MOTR(nn.Module):
                         'pred_logits': tmp[3+i],
                         'pred_boxes': tmp[3+n_dec+i],
                     } for i in range(n_dec)],
-                    'dmap':tmp[-2], 'corr':tmp[-1]
+                    'dmap':tmp[-2] if len(tmp)>3+n_dec*2 else None, 
+                    'corr':tmp[-1] if len(tmp)>3+n_dec*2 else None
                 }
             else:
                 frame = nested_tensor_from_tensor_list([frame])

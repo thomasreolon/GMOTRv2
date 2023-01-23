@@ -22,13 +22,14 @@ import util.misc as utils
 
 from datasets.data_prefetcher import data_dict_to_cuda
 from util.plot_utils import visualize_gt, train_visualize_pred
+from util.misc import get_rank
 
 def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, max_norm: float = 0, debug_out_path:str=False):
     model.train()
     criterion.train()
-    metric_logger = utils.MetricLogger(delimiter="  ")
+    metric_logger = utils.MetricLogger(delimiter="  ") #TODO: window/10
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     metric_logger.add_meter('grad_norm', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
     header = 'Epoch: [{}]'.format(epoch)
@@ -42,7 +43,7 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
         loss_dict = criterion(outputs, data_dict)
         # print("iter {} after model".format(cnt-1))
         weight_dict = criterion.weight_dict
-        losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
+        losses = sum(loss_dict[k].sum() * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
         # reduce losses over all GPUs for logging purposes
         if d_i%print_freq==0:
@@ -52,11 +53,12 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
             loss_dict_reduced_scaled = {k: v  for k, v in loss_dict_reduced.items()
                                             if 'aux' not in k and '_1' not in k and '_2' not in k and '_3' not in k}
             losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
-            loss_value = losses_reduced_scaled.item()
+            loss_value = losses_reduced_scaled.sum().item()
             if not math.isfinite(loss_value):
-                print("Loss is {}, stopping training".format(loss_value))
+                print("[gpu{}]Loss is {}, stopping training".format(get_rank(), loss_value), force=True)
                 print(loss_dict_reduced)
                 sys.exit(1)
+            metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled)
 
         optimizer.zero_grad()
         losses.backward()
@@ -66,7 +68,6 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
             grad_total_norm = utils.get_total_grad_norm(model.parameters(), max_norm)
         optimizer.step()
 
-        metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(grad_norm=grad_total_norm)
 

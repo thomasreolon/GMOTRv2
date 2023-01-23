@@ -1,9 +1,9 @@
---dataset_file e2e_synth
+--dataset_file e2e_joint
 
---epochs 10
+--epochs 40
 
---lr 2e-5
---lr_drop 25
+--lr 2e-4
+--lr_drop 16
 --lr_backbone 1e-5
 --batch_size 1
 --sample_mode random_interval
