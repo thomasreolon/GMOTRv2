@@ -96,7 +96,7 @@ class SynthData(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         bg_idx = (idx*2999) % len(self.bgs)
         s_idx = idx % len(self.samples)
-        d_idx = idx-1  - (idx*421) % (len(self.samples)-1)
+        d_idx = s_idx-1  - (idx*421) % (len(self.samples)-1)
         
         bg = self.bgs[bg_idx]
         base_bg, crops = self.samples[s_idx]
