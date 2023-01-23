@@ -9,21 +9,24 @@
 # ------------------------------------------------------------------------
 
 from .dance import build as build_e2e_dance
-from .joint import build as build_e2e_joint
+# from .joint import build as build_e2e_joint
 from .fscd import build as build_e2e_fscd
 from .gmot import build as build_e2e_gmot
-from .joint2 import build as build_e2e_synth
+from .joint2 import build as build_e2e_joint
+from .synth import build as build_e2e_synth
 
 
 def build_dataset(image_set, args):
-    if args.dataset_file == 'e2e_joint':
-        return build_e2e_joint(image_set, args)
+    # if args.dataset_file == 'e2e_joint':
+    #     return build_e2e_joint(image_set, args)
     if args.dataset_file == 'e2e_dance':
         return build_e2e_dance(image_set, args)
     if args.dataset_file == 'e2e_fscd':
         return build_e2e_fscd(image_set, args)
     if args.dataset_file == 'e2e_gmot':
         return build_e2e_gmot(image_set, args)
+    if args.dataset_file == 'e2e_joint':
+        return build_e2e_joint(image_set, args)
     if args.dataset_file == 'e2e_synth':
         return build_e2e_synth(image_set, args)
     raise ValueError(f'dataset {args.dataset_file} not supported')

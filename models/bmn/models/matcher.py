@@ -113,7 +113,7 @@ class DynamicSimilarityMatcher(nn.Module):
         out = torch.cat((out, corr), dim=-1)
         
         out = out.permute(1,0,2)
-        return out.permute(1, 2, 0).view(bs, c+1, h, w), energy 
+        return out.permute(1, 2, 0).view(bs, c+1, h, w), energy, (h, w)
     
     def _weight_init_(self):
         for p in self.parameters():

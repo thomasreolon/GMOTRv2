@@ -12,13 +12,12 @@
 DETR model and criterion classes.
 """
 import copy
-import math, os
-import numpy as np
+import math
 import torch
 import torch.nn.functional as F
 from torch import nn
 from typing import List
-import cv2
+import cv2, numpy as np
 
 from util import box_ops, checkpoint
 from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
@@ -55,6 +54,7 @@ class ClipMatcher(SetCriterion):
         self.focal_loss = True
         self.losses_dict = {}
         self._current_frame_idx = 0
+        self.g_blur = None
 
     def initialize_for_single_clip(self, gt_instances: List[Instances]):
         self.gt_instances = gt_instances
@@ -170,6 +170,63 @@ class ClipMatcher(SetCriterion):
             losses['class_error'] = 100 - accuracy(src_logits[idx], target_classes_o)[0]
 
         return losses
+
+
+    def loss_count(self, outputs, gt_inst):
+        boxes = gt_inst.boxes
+        corr_map = outputs['corr'].view(*self.corr_hw)      #H,W
+        density_map = outputs['dmap'][0,0]   #H,W
+
+
+        # density loss
+        count_map = torch.zeros_like(density_map)
+        std = 20 # boxes[:,2:].mean().item() * min(count_map.shape)
+        blurrer = self.get_gauss_blur(std).to(count_map.device)
+        for bb in boxes:
+            x, y = int(bb[0]*density_map.shape[1]), int(bb[1]*density_map.shape[0])
+            count_map[y,x] = 1.
+        with torch.no_grad():
+            count_map = blurrer(count_map[None,None])[0,0]
+        density_loss = F.mse_loss(density_map, count_map)
+
+        # correlation loss
+        count_map = F.adaptive_avg_pool2d(count_map[None], self.corr_hw).view(self.corr_hw)
+        positive = count_map > count_map.mean()+count_map.std()
+        corr_map = corr_map.exp()
+        corr_loss = - ( corr_map[positive].sum() / (corr_map.sum()+1e-10) ).log()
+
+
+        return 0.2*corr_loss, density_loss*1e5
+
+
+    def get_gauss_blur(self, std=14, kernel_size=32):
+        x_coord = torch.arange(kernel_size)
+        x_grid = x_coord.repeat(kernel_size).view(kernel_size, kernel_size)
+        y_grid = x_grid.t()
+        xy_grid = torch.stack([x_grid, y_grid], dim=-1).float()
+        if self.g_blur is None:
+            mean = (kernel_size - 1)/2.
+
+            # Calculate the 2-dimensional gaussian kernel which is
+            gaussian_kernel = (1./(2.*math.pi*std)) *\
+                            torch.exp(
+                                -torch.sum((xy_grid - mean)**2., dim=-1) /\
+                                (2*std)
+                            )
+            # Make sure sum of values in gaussian kernel equals 1.
+            gaussian_kernel = gaussian_kernel / torch.sum(gaussian_kernel)
+
+            # Reshape to 2d depthwise convolutional weight
+            gaussian_kernel = gaussian_kernel.view(1, 1, kernel_size, kernel_size)
+
+            gaussian_filter = torch.nn.Conv2d(in_channels=1, out_channels=1,
+                                        kernel_size=kernel_size, padding='same', bias=False)
+
+            gaussian_filter.weight.data = gaussian_kernel
+            gaussian_filter.weight.requires_grad = False
+            self.g_blur = gaussian_filter.float()
+        return self.g_blur
+
 
     def match_for_single_frame(self, outputs: dict):
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
@@ -289,6 +346,14 @@ class ClipMatcher(SetCriterion):
                 self.losses_dict.update(
                     {'frame_{}_ps{}_{}'.format(self._current_frame_idx, i, key): value for key, value in
                         l_dict.items()})
+        
+        if 'corr' in outputs:
+            cr_loss, cn_loss = self.loss_count(outputs, gt_instances_i)
+            self.losses_dict.update({
+                f'corr_loss_frame_{self._current_frame_idx}':cr_loss, 
+                f'count_loss_frame_{self._current_frame_idx}':cn_loss
+            })
+
         self._step()
         return track_instances
 
@@ -299,6 +364,7 @@ class ClipMatcher(SetCriterion):
         for loss_name, loss in losses.items():
             losses[loss_name] /= num_samples
         return losses
+
 
 
 class RuntimeTrackerBase(object):
@@ -540,7 +606,7 @@ class MOTR(nn.Module):
         attn_mask = None
 
         # proposals from agnostic counting
-        proposed = self._get_proposals(samples.tensors, exemplar.tensors)
+        proposed, dmap, corr = self._get_proposals(samples.tensors, exemplar.tensors)
         if proposed is not None:
             pr_tgt = self.prop_embed.expand(proposed.size(0), -1)
             query_embed = torch.cat([pr_tgt, query_embed])
@@ -591,6 +657,9 @@ class MOTR(nn.Module):
 
         ## Outputs Dict
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
+        if corr is not None:
+            out['dmap'] = dmap
+            out['corr'] = corr
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
         out['hs'] = hs[-1]
@@ -599,7 +668,7 @@ class MOTR(nn.Module):
     def _extract_exemplar_features(self, exemplar, srcs):
         exefeatures = []
 
-        if self.args.extract_exe_from_img:
+        if False and self.args.extract_exe_from_img:
             for src in srcs:
                 b,c,H,W = src.shape
                 bb = (exemplar.view(2,2) * torch.tensor([W,H], device=exemplar.device).view(1,2)).int().flatten()  # coords in src
@@ -624,6 +693,7 @@ class MOTR(nn.Module):
         return exefeatures
 
     def _get_proposals(self, image, exemplar):
+        if self.args.use_bmn==0: return None,None,None
         device = image.device
         # resize image
         w,h = 512, 512*image.shape[2]//image.shape[3]
@@ -642,6 +712,7 @@ class MOTR(nn.Module):
         # get proposals
         res = self.bmn(image, patch, True)
         interest = res['density_map'][0,0] ## H,W
+        self.criterion.corr_hw = res['f_shape']
 
         # generate q_refs from proposals
         good_pixels1 = torch.zeros_like(interest).bool()
@@ -652,7 +723,7 @@ class MOTR(nn.Module):
 
         good_pixels1[1:-1, 1:-1] = c1[1:, 1:-1] & c2[:-1, 1:-1] & c3[1:-1, 1:] & c4[1:-1, :-1]
         good_pixels2 = interest > interest.mean()+interest.std()*0.84   # top 20%
-        if not (good_pixels1 & good_pixels2).any(): return None
+        if not (good_pixels1 & good_pixels2).any(): return None,None,None
         good_pixels = (good_pixels1 & good_pixels2).nonzero(as_tuple=True)
         xy = torch.stack((good_pixels[-1], good_pixels[-2]), dim=1).float()
         xy = xy / torch.tensor([w,h],device=device).view(1,2)
@@ -660,31 +731,26 @@ class MOTR(nn.Module):
         bb = torch.tensor([[exemplar.shape[3]/image.shape[3],  exemplar.shape[2]/image.shape[2]]], device=device).expand(xy.shape[0], -1)
 
 
-        # import cv2
-        # tmp = image.cpu()[0].permute(1,2,0).numpy()[:,:,::-1]
-        # tmp = (tmp-tmp.min()) / (tmp.max()-tmp.min())
+        if self.args.debug and torch.rand(1)>0.98:
+            tmp = image.cpu()[0].permute(1,2,0).numpy()[:,:,::-1]
+            tmp = (tmp-tmp.min()) / (tmp.max()-tmp.min())
 
-        # for coord in xy:
-        #     x = int(coord[0]*tmp.shape[1]) 
-        #     y = int(coord[1]*tmp.shape[0])
-        #     tmp[y,x] = (0,0,1.)
-        #     tmp[y+1,x+1] = (0,0,1.)
-        #     tmp[y-1,x+1] = (0,0,1.)
-        #     tmp[y-1,x-1] = (0,0,1.)
-        #     tmp[y+1,x-1] = (0,0,1.)
-        # cv2.imshow('img', tmp)
-
-        # tmp = exemplar.cpu()[0].permute(1,2,0).numpy()[:,:,::-1]
-        # tmp = (tmp-tmp.min()) / (tmp.max()-tmp.min())
-        # cv2.imshow('exe', tmp)
-
-        # tmp = res['density_map'].cpu()[0].permute(1,2,0).numpy()
-        # tmp = (tmp-tmp.min()) / (tmp.max()-tmp.min())
-        # cv2.imshow('interest', tmp)
-        # cv2.waitKey()
+            for coord in xy:
+                x = int(coord[0]*tmp.shape[1]) 
+                y = int(coord[1]*tmp.shape[0])
+                tmp[y,x] = (0,0,1.)
+                tmp[y+1,x+1] = (0,0,1.)
+                tmp[y-1,x+1] = (0,0,1.)
+                tmp[y-1,x-1] = (0,0,1.)
+                tmp[y+1,x-1] = (0,0,1.)
+                tmp[y+2,x+2] = (1,0,1.)
+                tmp[y-2,x+2] = (1,0,1.)
+                tmp[y-2,x-2] = (1,0,1.)
+                tmp[y+2,x-2] = (1,0,1.)
+            cv2.imwrite(f'{self.args.output_dir}/debug/BMN_{len(xy)//10}.jpg', np.uint8(tmp*255))
 
 
-        return torch.cat((xy,bb),dim=1)  # Nx4
+        return torch.cat((xy,bb),dim=1), res['density_map'], res['corr_map']   # Nx4
 
 
     def _post_process_single_image(self, frame_res, track_instances, is_last):
@@ -798,7 +864,8 @@ class MOTR(nn.Module):
                         frame_res['pred_boxes'],
                         frame_res['hs'],
                         *[aux['pred_logits'] for aux in frame_res['aux_outputs']],
-                        *[aux['pred_boxes'] for aux in frame_res['aux_outputs']]
+                        *[aux['pred_boxes'] for aux in frame_res['aux_outputs']],
+                        frame_res['dmap'], frame_res['corr'],
                     )
 
                 args = [frame, exemplar, gtboxes] + [track_instances.get(k) for k in keys]
@@ -813,6 +880,7 @@ class MOTR(nn.Module):
                         'pred_logits': tmp[3+i],
                         'pred_boxes': tmp[3+n_dec+i],
                     } for i in range(n_dec)],
+                    'dmap':tmp[-2], 'corr':tmp[-1]
                 }
             else:
                 frame = nested_tensor_from_tensor_list([frame])
@@ -828,8 +896,7 @@ class MOTR(nn.Module):
             dt_instances = self.post_process(inst.to('cpu'), (data['imgs'][0].shape[-2:]))
             outputs['post_proc'].append(dt_instances)
 
-            if False:     # if true will show HUNGARIAN MATCHED detections for each image (debugging)
-                import cv2
+            if self.args.debug and torch.rand(1)>0.98:     # if true will show HUNGARIAN MATCHED detections for each image (debugging)
                 dt_instances = self.post_process(track_instances, data['imgs'][0].shape[-2:])
 
                 keep = dt_instances.scores > .02
@@ -841,10 +908,7 @@ class MOTR(nn.Module):
                 keep = areas > 100
                 dt_instances = dt_instances[keep]
 
-                if len(dt_instances)==0:
-                    print('nothing found')
-                else:
-                    print('ok')
+                if len(dt_instances)>0:
                     bbox_xyxy = dt_instances.boxes.tolist()
                     identities = dt_instances.obj_idxes.tolist()
 
@@ -858,8 +922,7 @@ class MOTR(nn.Module):
                         tmp = img[ y1:y2, x1:x2].copy()
                         img[y1-3:y2+3, x1-3:x2+3] = color
                         img[y1:y2, x1:x2] = tmp
-                    cv2.imshow('preds', img/4+.4)
-                    cv2.waitKey()
+                    cv2.imwrite(f'{self.args.output_dir}/debug/match_{len(dt_instances)}.jpg', np.uint8(tmp*255))
 
         if not self.training:
             outputs['track_instances'] = track_instances
@@ -886,6 +949,8 @@ def build(args):
         weight_dict.update({"frame_{}_loss_ce".format(i): args.cls_loss_coef,
                             'frame_{}_loss_bbox'.format(i): args.bbox_loss_coef,
                             'frame_{}_loss_giou'.format(i): args.giou_loss_coef,
+                            'corr_loss_frame_{}'.format(i): args.cls_loss_coef,
+                            'count_loss_frame_{}'.format(i): args.cls_loss_coef,
                             })
 
     # TODO this is a hack

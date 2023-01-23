@@ -185,7 +185,7 @@ class Detector(object):
 
 
 def load_for_eval(args):
-    ARCHITECTURE = ['use_exe_query', 'extract_exe_from_img', 'meta_arch', 'with_box_refine', 'two_stage', 'accurate_ratio', 'num_anchors', 'backbone', 'enable_fpn',  'position_embedding', 'num_feature_levels', 'enc_layers', 'dim_feedforward', 'num_queries', 'hidden_dim', 'dec_layers',  'nheads', 'enc_n_points', 'dec_n_points', 'decoder_cross_self', 'extra_track_attn', 'loss_normalizer']
+    ARCHITECTURE = ['use_bmn', 'use_exe_query', 'extract_exe_from_img', 'meta_arch', 'with_box_refine', 'two_stage', 'accurate_ratio', 'num_anchors', 'backbone', 'enable_fpn',  'position_embedding', 'num_feature_levels', 'enc_layers', 'dim_feedforward', 'num_queries', 'hidden_dim', 'dec_layers',  'nheads', 'enc_n_points', 'dec_n_points', 'decoder_cross_self', 'extra_track_attn', 'loss_normalizer']
     checkpoint = torch.load(args.resume, map_location='cpu')
     if 'args' in checkpoint:
         old_args = checkpoint['args']

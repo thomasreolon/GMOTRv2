@@ -51,14 +51,14 @@ class CACModel(nn.Module):
         # Stage 2: enhance feature representation, e.g., the self similarity module.
         refined_feature, patch_feature = self.refiner(features, patch_feature)
         # Stage 3: generate similarity map by densely measuring similarity. 
-        counting_feature, corr_map = self.matcher(refined_feature, patch_feature)
+        counting_feature, corr_map, f_shape = self.matcher(refined_feature, patch_feature)
         # Stage 4: predicting density map 
         density_map = self.counter(counting_feature)
         
         if not is_train:
             return density_map
         else:
-            return {'corr_map': corr_map, 'density_map': density_map}
+            return {'corr_map': corr_map, 'density_map': density_map, 'f_shape':tuple(f_shape)}
 
     #def _reset_parameters(self):
     #    for p in self.parameters():

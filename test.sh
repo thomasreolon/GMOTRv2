@@ -7,7 +7,7 @@ args="${args} ${tmp}"
 tmp=$(<"configs/_paths.args")
 args="${args} ${tmp}"
 
-python3 test.py ${args} --resume /home/intern/Desktop/GMOTRv2/outputs/best.pth --prob_detect 0.55 --debug
+python3 test.py ${args} --resume /home/intern/Desktop/GMOTRv2/outputs/bmn.pth --prob_detect 0.4 --debug --use_bmn 1
 # for FILE in outputs/*
 # do
 #     if [[ $FILE == *.pth ]]
