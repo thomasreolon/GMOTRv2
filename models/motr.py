@@ -32,12 +32,14 @@ from .matcher import build_matcher
 from .transformers import build_deforamble_transformer
 from .qim import pos2posemb, build as build_query_interaction_layer
 from .detr_loss import SetCriterion, MLP, sigmoid_focal_loss
+from .bmn import build as build_proposer
 
 def build(args):
     num_classes = 1
     device = torch.device(args.device)
 
     backbone = build_backbone(args)
+    proposer = build_proposer(args) if args.use_bmn else None
 
     transformer = build_deforamble_transformer(args)
     d_model = transformer.d_model
@@ -75,6 +77,7 @@ def build(args):
         backbone,
         transformer,
         track_embed=query_interaction_layer,
+        proposer=proposer,
         args=args,
         criterion=criterion,
         num_classes=num_classes
@@ -416,7 +419,7 @@ def _get_clones(module, N):
 
 
 class MOTR(nn.Module):
-    def __init__(self, backbone, transformer, track_embed, args, criterion, num_classes):
+    def __init__(self, backbone, transformer, track_embed, args, criterion, num_classes, proposer):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -433,6 +436,7 @@ class MOTR(nn.Module):
         self.num_queries = args.num_queries
         self.track_embed = track_embed
         self.transformer = transformer
+        if args.use_bmn: self.proposer = proposer
         hidden_dim = transformer.d_model
         self.num_classes = num_classes
         self.class_embed = nn.Linear(hidden_dim, num_classes)
@@ -512,6 +516,7 @@ class MOTR(nn.Module):
         self.criterion = criterion
         self.memory_bank = args.memory_bank_type
         self.mem_bank_len = 0 if args.memory_bank_type is None else self.memory_bank.max_his_length
+        self.show_frame = 0
 
     def _generate_empty_tracks(self):
         track_instances = Instances((1, 1))
@@ -565,22 +570,42 @@ class MOTR(nn.Module):
             masks.append(torch.zeros_like(exefeatures[:,0]).bool())
             pos.append(torch.zeros_like(exefeatures))
 
-        ## Add GT to guide Learning
+
+        ## prepare input for transformer
+        query_embed = track_instances.query_pos
+        ref_pts = track_instances.ref_pts
+        attn_mask = None
+
+        # proposals from agnostic counting
+        proposed=None
+        if self.args.use_bmn:
+            proposed, dmap, corr = self.proposer(samples.tensors, exemplar.tensors)
+            if proposed is not None:
+                pr_tgt = self.yolox_embed.weight.expand(proposed.size(0), -1)
+                query_embed = torch.cat([pr_tgt, query_embed])
+                ref_pts = torch.cat([proposed, ref_pts])
+
+        # Add GT to guide Learning
         if gtboxes is not None:
-            n_dt = len(track_instances)
+            n_dt = len(query_embed)
             ps_tgt = self.refine_embed.weight.expand(gtboxes.size(0), -1)
-            query_embed = torch.cat([track_instances.query_pos, ps_tgt])
-            ref_pts = torch.cat([track_instances.ref_pts, gtboxes])
+            query_embed = torch.cat([query_embed, ps_tgt])
+            ref_pts = torch.cat([ref_pts, gtboxes])
             attn_mask = torch.zeros((len(ref_pts), len(ref_pts)), dtype=bool, device=ref_pts.device)
             attn_mask[:n_dt, n_dt:] = True
-        else:
-            query_embed = track_instances.query_pos
-            ref_pts = track_instances.ref_pts
-            attn_mask = None
 
+    
         ## TRANSFORMER
         hs, outputs_class, outputs_coord = \
             self.transformer(srcs, masks, pos, query_embed, ref_pts=ref_pts, attn_mask=attn_mask)
+
+        # remove proposed (maybe reuse them later in a loss)
+        if proposed is not None:
+            n_pr = proposed.size(0)
+            hs = hs[..., n_pr:, :]
+            outputs_class = outputs_class[..., n_pr:, :]
+            outputs_coord = outputs_coord[..., n_pr:, :]
+
 
         ## Outputs Dict
         out = {'pred_logits': outputs_class[-1], 'pred_boxes': outputs_coord[-1]}
@@ -671,6 +696,9 @@ class MOTR(nn.Module):
             'post_proc': [],
         }
         keys = list(self._generate_empty_tracks()._fields.keys())
+        if self.args.debug and np.random.rand(1)>.98:
+            self.show_frame = 5 # create visualization for 5 frames
+        else : self.show_frame = 0
         for frame_index, (frame, gt) in enumerate(zip(frames, data['gt_instances'])):
             frame.requires_grad = False
             is_last = frame_index == len(frames) - 1
@@ -734,8 +762,8 @@ class MOTR(nn.Module):
             dt_instances = self.post_process(inst.to('cpu'), (data['imgs'][0].shape[-2:]))
             outputs['post_proc'].append(dt_instances)
 
-            if False:     # if true will show HUNGARIAN MATCHED detections for each image (debugging)
-                import cv2
+            if self.args.debug and self.show_frame>0:     # if true will show HUNGARIAN MATCHED detections for each image (debugging)
+                self.show_frame -= 1
                 dt_instances = self.post_process(track_instances, data['imgs'][0].shape[-2:])
 
                 keep = dt_instances.scores > .02
@@ -747,10 +775,7 @@ class MOTR(nn.Module):
                 keep = areas > 100
                 dt_instances = dt_instances[keep]
 
-                if len(dt_instances)==0:
-                    print('nothing found')
-                else:
-                    print('ok')
+                if len(dt_instances)!=0:
                     bbox_xyxy = dt_instances.boxes.tolist()
                     identities = dt_instances.obj_idxes.tolist()
 
@@ -764,8 +789,7 @@ class MOTR(nn.Module):
                         tmp = img[ y1:y2, x1:x2].copy()
                         img[y1-3:y2+3, x1-3:x2+3] = color
                         img[y1:y2, x1:x2] = tmp
-                    cv2.imshow('preds', img/4+.4)
-                    cv2.waitKey()
+                cv2.imwrite(f'{self.args.output_dir}/debug/MATCH_{len(dt_instances)%5}_{self.show_frame}.jpg', np.uint8((img/4+.4)*255))
 
         if not self.training:
             outputs['track_instances'] = track_instances

@@ -3,6 +3,7 @@ import torch.nn.functional as F
 import cv2, numpy as np
 
 from .models import build_model
+from util.misc import is_main_process
 
 class BMNProposer(torch.nn.Module):
     def __init__(self, args) -> None:
@@ -28,9 +29,8 @@ class BMNProposer(torch.nn.Module):
         patch = {'scale_embedding':torch.tensor([[scale]], device=device).int(), 'patches':exemplar[:,None]}
 
         # get proposals
-        res = self.bmn(image, patch, True)
+        res = self.model(image, patch, True)
         interest = F.adaptive_avg_pool2d(res['density_map'], image.shape[-2:]) [0,0] #HW
-        self.criterion.corr_hw = res['f_shape']
 
         # generate q_refs from proposals
         good_pixels1 = torch.zeros_like(interest).bool()
@@ -54,7 +54,7 @@ class BMNProposer(torch.nn.Module):
 
         if self.args.debug and torch.rand(1)>0.98:
             tmp = image.cpu()[0].permute(1,2,0).numpy()[:,:,::-1]
-            tmp = (tmp-tmp.min()) / (tmp.max()-tmp.min())
+            tmp = tmp / 4 + .5  # special normalization
 
             for coord in xy:
                 x = int(coord[0]*tmp.shape[1]) 
@@ -78,13 +78,10 @@ class BMNProposer(torch.nn.Module):
 
 
 
-
-
-
-def build(args, load_pretrained):
+def build(args):
     model = BMNProposer(args)
 
-    if args.bmn_pretrained and load_pretrained:
+    if args.bmn_pretrained and is_main_process():
         checkpoint = torch.load(args.bmn_pretrained, map_location='cpu')
         model.model.load_state_dict(checkpoint['model'])
 

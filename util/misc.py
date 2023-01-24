@@ -324,7 +324,7 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor], size_divisibility:
             pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
             m[: img.shape[1], :img.shape[2]] = False
         
-        tensor = (tensor-tensor.min()) / (tensor.max()-tensor.min())
+        tensor = ((tensor-tensor.min()) / (tensor.max()-tensor.min()+1e-8) -.5)  *4
     else:
         raise ValueError('not supported')
     return NestedTensor(tensor, mask)
