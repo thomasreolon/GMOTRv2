@@ -68,13 +68,29 @@ def load_gmot(split, args):
     videos = os.listdir(base_path)
 
     for video in videos:
-        # get 1st BB
+        # get 1st 12 BB
         gt = args.gmot_path+f'/track_label/{video}.txt'
         with open(gt, 'r') as fin:
+            lines = []
             for _ in range(300):
                 line = fin.readline()
-                if line[0] == '0': break
-        line = [int(l) for l in line.split(',')]
+                if line[0] == '0': 
+                    lines.append([int(l) for l in line.split(',')])
+                if len(lines)==12:break
+        
+        # select good BB
+        lines = np.array(lines)
+        i = np.arange(len(lines))
+        r = lines[:,4]/(lines[:,5]+0.001)
+        a = lines[:,4]*lines[:,5]
+        scores= [(ii,rr,aa) for ii,rr,aa in zip(i,r,a)]
+        scores.sort(key=lambda x:x[1])
+        scores = scores[4:-4]
+        scores.sort(key=lambda x:x[2])
+        idx = scores[-1][0]
+
+        # get coords
+        line = lines[idx]
         bb = line[2], line[3], line[2]+line[4], line[3]+line[5],
 
         # get images
