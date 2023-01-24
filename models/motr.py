@@ -186,7 +186,16 @@ class ClipMatcher(SetCriterion):
             count_map[y,x] = 1.
         with torch.no_grad():
             count_map = blurrer(count_map[None,None])[0,0]
+            count_map = count_map - count_map.min()
+            count_map = count_map / count_map.sum() * len(boxes)
         density_loss = F.mse_loss(density_map, count_map)
+        
+        # if torch.rand(1)>0.5:
+        #     print('ok')
+        #     tmp = torch.cat((density_map, count_map), dim=1).clone().detach().cpu().numpy()[:,:,None]
+        #     tmp = (tmp-tmp.min()) / (tmp.max()-tmp.min())
+        #     cv2.imshow('loss', tmp)
+        #     cv2.waitKey(40)
 
         # correlation loss
         count_map = F.adaptive_avg_pool2d(count_map[None], self.corr_hw).view(self.corr_hw)
@@ -194,8 +203,9 @@ class ClipMatcher(SetCriterion):
         corr_map = (corr_map-corr_map.mean()) / (corr_map.std()+1e-8)
         corr_map = corr_map.exp()
         corr_loss = - ( corr_map[positive].sum() / (corr_map.sum()+1e-10) ).log()
+        # corr_loss = 0
 
-        return 0.2*corr_loss, density_loss*1e5
+        return corr_loss*1e-5, density_loss
 
 
     def get_gauss_blur(self, std=14, kernel_size=32):
@@ -460,14 +470,16 @@ class MOTR(nn.Module):
         self.use_checkpoint = args.use_checkpoint
         self.query_denoise = args.query_denoise
 
+        emb = (1, args.num_queries) if self.args.use_bmn else (args.num_queries, -1)
         grid = torch.stack(torch.meshgrid(.5+torch.arange(q_per_row)/q_per_row, .5+torch.arange(q_per_row)/q_per_row),dim=2).view(-1,2)
         self.q_refs = nn.Parameter(torch.cat((grid, .02+.1*torch.rand(args.num_queries, 2)), dim=1))
-        self.q_emb = nn.Parameter(torch.rand(1, hidden_dim).expand(args.num_queries, -1))
+        self.q_emb = nn.Parameter(torch.rand(emb[0], hidden_dim).expand(emb[1], -1))
         self.prop_embed = nn.Parameter(torch.rand(1, hidden_dim))
         if args.query_denoise:
             self.refine_embed = nn.Parameter(torch.rand(1, hidden_dim))
 
-        self.bmn = build_bmn(args.bmn_pretrained)
+        if self.args.use_bmn:
+            self.bmn = build_bmn(args.bmn_pretrained)
         if args.num_feature_levels > 1:
             num_backbone_outs = len(backbone.strides)
             input_proj_list = []
@@ -709,7 +721,7 @@ class MOTR(nn.Module):
 
         # get proposals
         res = self.bmn(image, patch, True)
-        interest = res['density_map'][0,0] ## H,W
+        interest = F.adaptive_avg_pool2d(res['density_map'], image.shape[-2:]) [0,0] #HW
         self.criterion.corr_hw = res['f_shape']
 
         # generate q_refs from proposals
@@ -720,8 +732,11 @@ class MOTR(nn.Module):
         c4 = interest[:, 1: ] >  interest[:, :-1]  # bigger than right
 
         good_pixels1[1:-1, 1:-1] = c1[1:, 1:-1] & c2[:-1, 1:-1] & c3[1:-1, 1:] & c4[1:-1, :-1]
-        good_pixels2 = interest > interest.mean()+interest.std()*0.84   # top 20%
-        if not (good_pixels1 & good_pixels2).any(): return None,None,None
+        good_pixels2 = interest > interest.max()/2
+
+        # print(interest.mean(), interest.std(), good_pixels1.sum(), good_pixels2.sum())
+        if not (good_pixels1 & good_pixels2).any(): 
+            return None, res['density_map'], res['corr_map']
         good_pixels = (good_pixels1 & good_pixels2).nonzero(as_tuple=True)
         xy = torch.stack((good_pixels[-1], good_pixels[-2]), dim=1).float()
         xy = xy / torch.tensor([w,h],device=device).view(1,2)
@@ -729,7 +744,7 @@ class MOTR(nn.Module):
         bb = torch.tensor([[exemplar.shape[3]/image.shape[3],  exemplar.shape[2]/image.shape[2]]], device=device).expand(xy.shape[0], -1)
 
 
-        if self.args.debug and torch.rand(1)>0.98:
+        if self.args.debug and torch.rand(1)>0.7:
             tmp = image.cpu()[0].permute(1,2,0).numpy()[:,:,::-1]
             tmp = (tmp-tmp.min()) / (tmp.max()-tmp.min())
 
@@ -741,10 +756,15 @@ class MOTR(nn.Module):
                 tmp[y-1,x+1] = (0,0,1.)
                 tmp[y-1,x-1] = (0,0,1.)
                 tmp[y+1,x-1] = (0,0,1.)
-                tmp[y+2,x+2] = (1,0,1.)
-                tmp[y-2,x+2] = (1,0,1.)
-                tmp[y-2,x-2] = (1,0,1.)
-                tmp[y+2,x-2] = (1,0,1.)
+                tmp[y+2,x+2] = (1,0,.3)
+                tmp[y-2,x+2] = (1,0,.3)
+                tmp[y-2,x-2] = (1,0,.3)
+                tmp[y+2,x-2] = (1,0,.3)
+            tmp2 = interest.clone().detach().cpu()[:,:,None].expand(-1,-1,3).numpy()
+            tmp2 = (tmp2-tmp2.min()) / (tmp2.max()-tmp2.min())
+            tmp = np.concatenate((tmp,tmp2), axis=1)
+            # cv2.imshow('ddd', tmp)
+
             cv2.imwrite(f'{self.args.output_dir}/debug/BMN_{len(xy)//10}.jpg', np.uint8(tmp*255))
 
 
@@ -897,7 +917,7 @@ class MOTR(nn.Module):
             dt_instances = self.post_process(inst.to('cpu'), (data['imgs'][0].shape[-2:]))
             outputs['post_proc'].append(dt_instances)
 
-            if self.args.debug and torch.rand(1)>0.98:     # if true will show HUNGARIAN MATCHED detections for each image (debugging)
+            if self.args.debug and torch.rand(1)>0.8:     # if true will show HUNGARIAN MATCHED detections for each image (debugging)
                 dt_instances = self.post_process(track_instances, data['imgs'][0].shape[-2:])
 
                 keep = dt_instances.scores > .02
@@ -914,16 +934,18 @@ class MOTR(nn.Module):
                     identities = dt_instances.obj_idxes.tolist()
 
                     img = data['imgs'][frame_index].clone().cpu().permute(1,2,0).numpy()[:,:,::-1]
+                    # img = (img-img.min())/(img.max()-img.min())
+                    img = img/4 +.4
                     for xyxy, track_id in zip(bbox_xyxy, identities):
                         if track_id < 0 or track_id is None:
                             continue
                         x1, y1, x2, y2 = [int(a) for a in xyxy]
-                        color = tuple([(((5+track_id*3)*4909 % p)%256) /110 for p in (3001, 1109, 2027)])
+                        color = tuple([(((5+track_id*3)*4909 % p)%256) /256 for p in (3001, 1109, 2027)])
 
                         tmp = img[ y1:y2, x1:x2].copy()
                         img[y1-3:y2+3, x1-3:x2+3] = color
                         img[y1:y2, x1:x2] = tmp
-                    cv2.imwrite(f'{self.args.output_dir}/debug/match_{len(dt_instances)}.jpg', np.uint8(tmp*255))
+                    cv2.imwrite(f'{self.args.output_dir}/debug/match_{len(dt_instances)//10}.jpg', np.uint8(img*255))
 
         if not self.training:
             outputs['track_instances'] = track_instances

@@ -323,6 +323,8 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor], size_divisibility:
         for img, pad_img, m in zip(tensor_list, tensor, mask):
             pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
             m[: img.shape[1], :img.shape[2]] = False
+
+        # tensor = 4*((tensor-tensor.min()) / (tensor.max()-tensor.min())   -.5)  ######### NORMALIZE IMAGE IN A FIXED WAY
     else:
         raise ValueError('not supported')
     return NestedTensor(tensor, mask)

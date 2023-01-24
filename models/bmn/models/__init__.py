@@ -22,10 +22,8 @@ def build_model(pretrained=None):
     model = CACModel(backbone, epf_extractor, refiner, matcher, counter, cfg.MODEL.hidden_dim)
 
     if pretrained:
+        print('loading BMN')
         checkpoint = torch.load(pretrained, map_location='cpu')
         model.load_state_dict(checkpoint['model'])
-    
+
     return model
-    
-    
-    

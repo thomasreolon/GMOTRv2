@@ -1,5 +1,4 @@
---dataset_file e2e_joint
-
+--dataset_file e2e_fscd
 --epochs 40
 
 --lr 2e-4

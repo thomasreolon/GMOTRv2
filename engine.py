@@ -43,7 +43,7 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
         loss_dict = criterion(outputs, data_dict)
         # print("iter {} after model".format(cnt-1))
         weight_dict = criterion.weight_dict
-        losses = sum(loss_dict[k].sum() * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
+        losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
 
         # reduce losses over all GPUs for logging purposes
         if d_i%print_freq==0:
@@ -53,11 +53,12 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
             loss_dict_reduced_scaled = {k: v  for k, v in loss_dict_reduced.items()
                                             if 'aux' not in k and '_1' not in k and '_2' not in k and '_3' not in k}
             losses_reduced_scaled = sum(loss_dict_reduced_scaled.values())
-            loss_value = losses_reduced_scaled.sum().item()
+            loss_value = losses_reduced_scaled.item()
             if not math.isfinite(loss_value):
                 print("[gpu{}]Loss is {}, stopping training".format(get_rank(), loss_value), force=True)
                 print(loss_dict_reduced)
                 sys.exit(1)
+            loss_dict_reduced_scaled = {k:(v if 'loss_fr' not in k else v*1e8) for k,v in loss_dict_reduced_scaled.items()}
             metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled)
 
         optimizer.zero_grad()

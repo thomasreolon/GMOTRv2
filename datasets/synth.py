@@ -12,9 +12,11 @@ def add_patch(img, patch, coord):
     y = max(0,min(coord[1], img.shape[0]-h-1))
     tmp = img[y:y+h, x:x+w]
     good = patch.sum(axis=-1) > 50
+    if tuple(tmp.shape) != tuple(patch.shape): return False
     tmp[good] = patch[good]
     coord[0]=x
     coord[1]=y
+    return True
 
 def get_movement(img, strength):
     dw = int((torch.rand(1)-.5)*img.shape[1]*strength)
@@ -41,7 +43,10 @@ def simulate(img, data):
         patch, coord, velocity, idx = data[i]
         # draw box
         if coord is not None and idx>=0:
-            add_patch(img, patch, coord)
+            success=add_patch(img, patch, coord)
+            if not success:
+                data[i][3] = -1
+                continue
             bb = [coord[0]+patch.shape[1]/2, coord[1]+patch.shape[0]/2, patch.shape[1], patch.shape[0]]
             gt_bb.append([int(b) for b in bb])
             gt_idx.append(idx)
@@ -160,6 +165,7 @@ class SynthData(torch.utils.data.Dataset):
             j=0
             while exemplar is None:
                 j-=1
+                if -j==len(gt_bb): return self.__getitem__(42)
                 x,y,w,h = gt_bb[j]
                 exe = images[-1][:, y-h//2:y+h//2, x-w//2:x+w//2]
                 bb = inst.boxes[-1]

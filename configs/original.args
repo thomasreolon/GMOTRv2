@@ -1,2 +1,3 @@
 --meta_arch deformable_detr
 --num_queries 100
+--use_bmn 0
