@@ -117,27 +117,6 @@ class ClipMatcher(SetCriterion):
     def _step(self):
         self._current_frame_idx += 1
 
-    def calc_loss_for_track_scores(self, track_instances: Instances):
-        frame_id = self._current_frame_idx - 1
-        gt_instances = self.gt_instances[frame_id]
-        outputs = {
-            'pred_logits': track_instances.track_scores[None],
-        }
-        device = track_instances.track_scores.device
-
-        num_tracks = len(track_instances)
-        src_idx = torch.arange(num_tracks, dtype=torch.long, device=device)
-        tgt_idx = track_instances.matched_gt_idxes  # -1 for FP tracks and disappeared tracks
-
-        track_losses = self.get_loss('labels',
-                                     outputs=outputs,
-                                     gt_instances=[gt_instances],
-                                     indices=[(src_idx, tgt_idx)],
-                                     num_boxes=1)
-        self.losses_dict.update(
-            {'frame_{}_track_{}'.format(frame_id, key): value for key, value in
-             track_losses.items()})
-
     def get_num_boxes(self, num_samples):
         num_boxes = torch.as_tensor(num_samples, dtype=torch.float, device=self.sample_device)
         if is_dist_avail_and_initialized():
@@ -579,7 +558,8 @@ class MOTR(nn.Module):
         # proposals from agnostic counting
         proposed=None
         if self.args.use_bmn:
-            proposed, dmap, corr = self.proposer(samples.tensors, exemplar.tensors)
+            gt_instances_i = self.criterion.gt_instances[self.criterion._current_frame_idx-1]
+            proposed, loss = self.proposer(samples.tensors, exemplar.tensors, gt_boxes=gt_instances_i.boxes)
             if proposed is not None:
                 pr_tgt = self.yolox_embed.weight.expand(proposed.size(0), -1)
                 query_embed = torch.cat([pr_tgt, query_embed])
