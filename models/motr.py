@@ -556,10 +556,10 @@ class MOTR(nn.Module):
         attn_mask = None
 
         # proposals from agnostic counting
-        proposed=None
+        proposed, c_loss = None, 0
         if self.args.use_bmn:
             gt_instances_i = self.criterion.gt_instances[self.criterion._current_frame_idx-1]
-            proposed, loss = self.proposer(samples.tensors, exemplar.tensors, gt_boxes=gt_instances_i.boxes)
+            proposed, c_loss = self.proposer(samples.tensors, exemplar.tensors, gt_boxes=gt_instances_i.boxes)
             if proposed is not None:
                 pr_tgt = self.yolox_embed.weight.expand(proposed.size(0), -1)
                 query_embed = torch.cat([pr_tgt, query_embed])
@@ -592,6 +592,7 @@ class MOTR(nn.Module):
         if self.aux_loss:
             out['aux_outputs'] = self._set_aux_loss(outputs_class, outputs_coord)
         out['hs'] = hs[-1]
+        out['count_loss'] = c_loss
         return out
 
 
@@ -674,6 +675,7 @@ class MOTR(nn.Module):
             'pred_logits': [],
             'pred_boxes': [],
             'post_proc': [],
+            'count_loss':[],
         }
         keys = list(self._generate_empty_tracks()._fields.keys())
         if self.args.debug and np.random.rand(1)>.98:
@@ -706,13 +708,14 @@ class MOTR(nn.Module):
                         exemplar = nested_tensor_from_tensor_list([exemplar])
                     tmp = Instances((1, 1), **dict(zip(keys, args)))
                     frame_res = self._forward_single_image(frame, exemplar, tmp, gtboxes)
+                    loss = (frame_res['count_loss'],) if isinstance(frame_res['count_loss'],torch.Tensor) else tuple()
                     return (
                         frame_res['pred_logits'],
                         frame_res['pred_boxes'],
                         frame_res['hs'],
                         *[aux['pred_logits'] for aux in frame_res['aux_outputs']],
                         *[aux['pred_boxes'] for aux in frame_res['aux_outputs']]
-                    )
+                    ) + loss
 
                 args = [frame, exemplar, gtboxes] + [track_instances.get(k) for k in keys]
                 params = tuple((p for p in self.parameters() if p.requires_grad))
@@ -726,12 +729,14 @@ class MOTR(nn.Module):
                         'pred_logits': tmp[3+i],
                         'pred_boxes': tmp[3+n_dec+i],
                     } for i in range(n_dec)],
+                    'count_loss': 0 if len(tmp)==3+n_dec*2 else tmp[-1]
                 }
             else:
                 frame = nested_tensor_from_tensor_list([frame])
                 if not self.args.extract_exe_from_img:
                     exemplar = nested_tensor_from_tensor_list([exemplar])
                 frame_res = self._forward_single_image(frame, exemplar, track_instances, gtboxes)
+            outputs['count_loss'].append(frame_res['count_loss'])
             frame_res = self._post_process_single_image(frame_res, track_instances, is_last) # TODO do it inside of checkpoint
 
             track_instances = frame_res['track_instances']

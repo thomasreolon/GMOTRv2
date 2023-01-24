@@ -31,6 +31,7 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     metric_logger.add_meter('grad_norm', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
+    metric_logger.add_meter('counting_loss', utils.SmoothedValue(window_size=10, fmt='{value:.6f}'))
     header = 'Epoch: [{}]'.format(epoch)
     print_freq = 10
     n_dl = len(data_loader)
@@ -43,6 +44,8 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
         # print("iter {} after model".format(cnt-1))
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
+        c_loss = sum(outputs['count_loss'], 0)
+        losses = losses + c_loss
 
         # reduce losses over all GPUs for logging purposes
         if d_i%print_freq==0:
@@ -69,6 +72,7 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(grad_norm=grad_total_norm)
+        metric_logger.update(counting_loss=c_loss.item())
 
         # gather the stats from all processes
         if debug_out_path and d_i in {0,1,2,3,4,50%n_dl, 150%n_dl, 100%n_dl, n_dl//2, n_dl*4//5}:

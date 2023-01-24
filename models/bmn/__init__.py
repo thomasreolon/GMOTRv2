@@ -92,7 +92,7 @@ class BMNProposer(torch.nn.Module):
             xy_grid = torch.stack([x_grid, y_grid], dim=-1).float()
             mean = (64 - 1)/2.
             gaussian_kernel = torch.exp(
-                                -torch.sum((xy_grid - mean)**2., dim=-1) / (2*64)
+                                -torch.sum((xy_grid - mean)**2., dim=-1) / 200
                             )
             gaussian_kernel = gaussian_kernel / torch.sum(gaussian_kernel)
             self.g_blur = gaussian_kernel.to(count_map.device)

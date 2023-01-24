@@ -31,7 +31,6 @@ def get_images(video_name, d):
 
 
 class GMOTDataset(Dataset):
-
     def __init__(self, args, split='all', transform=None):
         self._cache = {}        # store precomputed inputs (images, patches, ...)
         self.args = args
@@ -60,19 +59,12 @@ class GMOTDataset(Dataset):
 
     def load_files(self, split, dataset_path):
         videos = os.listdir(f'{dataset_path}/GenericMOT_JPEG_Sequence')
-        if split == 'train':
-            videos = [v for v in videos if ('0' in v) or ('2' in v)]
-        if split == 'val':
-            videos = [v for v in videos if ('3' in v)]
-        if split == 'test':
-            videos = [v for v in videos if ('1' in v)]
 
         for vid in videos:
             txt_path = f'{dataset_path}/track_label/{vid}.txt'
             self.data[vid] = load_labels(txt_path)
 
-            if self.args.small_dataset:
-                self.data[vid] = {k:v for k,v in self.data[vid].items() if k<40}
+            self.data[vid] = {k:v for k,v in self.data[vid].items() if k<40}
 
             self.video_dict[vid] = len(self.video_dict)
             t_min = min(self.data[vid].keys())
