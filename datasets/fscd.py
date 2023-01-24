@@ -4,6 +4,7 @@ import pathlib
 import json
 
 import torch
+import torchvision.transforms.functional as F
 from torch.utils.data import Dataset
 
 from .transforms import make_imgdataset_transforms
@@ -49,8 +50,10 @@ class FSCDataset(Dataset):
             if boxinfo['image_id'] not in id2img: 
                 continue
             img_path = id2img[ boxinfo['image_id'] ]
+            b = d_exe[img_path]['box_examples_coordinates'][0]
+            b = b[0][1], b[0][0] , b[2][1], b[2][0]
             bbs[img_path].append(boxinfo['bbox'])
-        bbs = [(k,v)for k,v in bbs.items() if len(v)<250]
+        bbs = [(k,v,b) for k,v in bbs.items() if len(v)<250]
         return bbs
 
     def __len__(self):
@@ -60,7 +63,7 @@ class FSCDataset(Dataset):
         if idx in self._cache:
             img, target, exe = self._cache[idx]
         else:
-            img_path, bbs = self.detections[idx]
+            img_path, bbs, e_bb = self.detections[idx]
             img = Image.open(self.path_imgs+img_path)
 
             obj_idx_offset = idx * 1000
@@ -79,16 +82,16 @@ class FSCDataset(Dataset):
             target['boxes'][:,2:] += target['boxes'][:,:2]
             
             # get exemplar
-            exe = None # TODO: get from recommended boxes + resize
+            exe = None #F.normalize(F.to_tensor(img.crop(e_bb)), (0.485,0.456,0.406),(0.229,0.224,0.225))
 
             if len(self._cache) < 3000:
                 self._cache[idx] = img, target, exe
 
 
-        return [img], [target]
+        return [img], [target], [exe]
 
     def __getitem__(self, idx):
-        images, targets = self._pre_single_frame(idx)
+        images, targets, exemplar = self._pre_single_frame(idx)
         if self.transform is not None:
             images, targets = self.transform(images, targets)
         gt_instances = []

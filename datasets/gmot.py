@@ -64,7 +64,7 @@ class GMOTDataset(Dataset):
             txt_path = f'{dataset_path}/track_label/{vid}.txt'
             self.data[vid] = load_labels(txt_path)
 
-            self.data[vid] = {k:v for k,v in self.data[vid].items() if k<40}
+            self.data[vid] = {k:v for k,v in self.data[vid].items() if k<10}
 
             self.video_dict[vid] = len(self.video_dict)
             t_min = min(self.data[vid].keys())
