@@ -72,7 +72,7 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(grad_norm=grad_total_norm)
-        metric_logger.update(counting_loss=c_loss.item())
+        metric_logger.update(counting_loss=c_loss.item() if isinstance(c_loss, torch.Tensor) else -1)
 
         # gather the stats from all processes
         if debug_out_path and d_i in {0,1,2,3,4,50%n_dl, 150%n_dl, 100%n_dl, n_dl//2, n_dl*4//5}:

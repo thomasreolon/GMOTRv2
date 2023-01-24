@@ -14,7 +14,7 @@ from models.structures import Instances
 # load tracking labels (MOT format)
 def load_labels(txt_path):
     gt = defaultdict(lambda: [])
-    data = np.genfromtxt(txt_path, delimiter=',', dtype=np.int)
+    data = np.genfromtxt(txt_path, delimiter=',', dtype=np.int64)
 
     for line in data:
         gt[line[0]].append( [line[2], line[3], line[2]+line[4], line[3]+line[5], line[1]] )

@@ -70,7 +70,7 @@ class BMNProposer(torch.nn.Module):
                 self.apply_blur(count_map, x,y,w,h)
         
         # density loss
-        density_loss = F.mse_loss(density_map, count_map)
+        density_loss = F.mse_loss(density_map*2, count_map*2) *2
         
         # correlation loss
         corr_hw = density_map.shape[0]//16, density_map.shape[1]//16
