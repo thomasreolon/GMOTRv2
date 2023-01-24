@@ -109,7 +109,7 @@ class BMNProposer(torch.nn.Module):
         r_x2 = min(count_map.shape[1]-1,x2)
         r_y2 = min(count_map.shape[0]-1,y2)
 
-        count_map[r_y1:r_y2, r_x1:r_x2] += kernel[r_y1-y1:r_y2-y2+kernel.shape[0], x1-r_x1:r_x2-x2+kernel.shape[1]]
+        count_map[r_y1:r_y2, r_x1:r_x2] += kernel[r_y1-y1:r_y2-y2+kernel.shape[0], r_x1-x1:r_x2-x2+kernel.shape[1]]
 
     # def _loss_fast(self, density_map, corr_map, boxes):
     #     # density loss

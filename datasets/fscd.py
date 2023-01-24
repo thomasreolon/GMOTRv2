@@ -108,22 +108,30 @@ class FSCDataset(Dataset):
         }
 
 
-    def get_exemplar(self,img,target, p=0):
-        bbnorm = target['boxes'][p].clone()
-        bbnorm = bbnorm.clamp(min=0)
-        bb = (bbnorm.view(2,2) * torch.tensor([img.shape[2],img.shape[1]]).view(1,2)).flatten()  # coords in img
-        bb = torch.cat((bb[:2]-bb[2:]/2, bb[:2]+bb[2:]/2)).int()               # x1y1x2y2
-        crop = img[:, bb[1]:bb[3], bb[0]:bb[2]]
-
+    def get_exemplar(self,img,target):
+        bbnorm = target['boxes'].clone().view(-1,2,2).clip(0,1)
+        bb = (bbnorm * torch.tensor([[[img.shape[2],img.shape[1]]]])).view(-1,4)
+        rateos = bb[:,2] / (bb[:,3]+1e-8)
+        areas = bb[:,2] * (bb[:,3]+1e-8)
+        std, search = 0.2, True
+        while search:
+            good_box = (rateos-rateos.mean())**2  < rateos.std()**2 *std
+            good_box &= (areas-(areas.mean()+areas.std()*(.4+std)/2))**2 < areas.std()**2 *(std/2)
+            std += 0.1
+            if good_box.any():
+                bbs = bb[good_box].view(-1,4)
+                for bb in bbs:
+                    bb = torch.cat((bb[:2]-bb[2:]/2, bb[:2]+bb[2:]/2)).int()               # x1y1x2y2
+                    crop = img[:, bb[1]:bb[3], bb[0]:bb[2]]
+                    if crop.numel()>0:
+                        search = False
+                        break
+            if std>1:break
+        
+        if crop.numel()==0:raise Exception()
         # check goodness of patch
-        min_dim = torch.tensor([min(*crop.shape)],dtype=float)
-        if len(target['boxes'])==p+1:
-            # emergence
-            crop = img[:, bb[1]:bb[1]+4, bb[0]:bb[0]+4]
-        elif min_dim==0 or max(crop.shape[1:])/min(crop.shape[1:])>5:
-            # get next box in case of errors
-            return self.get_exemplar(img, target, p+1)
-        return [crop, bbnorm]
+
+        return [crop]
 
     def set_epoch(self, epoch):
         self.current_epoch = epoch

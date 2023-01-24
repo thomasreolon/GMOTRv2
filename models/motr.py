@@ -669,7 +669,7 @@ class MOTR(nn.Module):
         if self.training:
             self.criterion.initialize_for_single_clip(data['gt_instances'])
         frames = data['imgs']  # list of Tensor.
-        exemplar = data['exemplar'][1] if self.args.extract_exe_from_img else data['exemplar'][0]
+        exemplar = data['exemplar'][0]
 
         outputs = {
             'pred_logits': [],

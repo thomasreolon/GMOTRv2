@@ -164,7 +164,7 @@ class Detector(object):
         lines = []
         track_instances = None
         for i, (ori_img, cur_img, exemplar, bb) in enumerate(tqdm(loader)):
-            ori_img, cur_img, exemplar, bb = ori_img[0].numpy()[:,:,::-1], cur_img[0], exemplar[0], bb[0]
+            ori_img, cur_img, exemplar = ori_img[0].numpy()[:,:,::-1], cur_img[0], exemplar[0]
             # predict
             cur_img, exemplar, bb = cur_img.to(self.args.device), exemplar.to(self.args.device), bb.to(self.args.device)
 
