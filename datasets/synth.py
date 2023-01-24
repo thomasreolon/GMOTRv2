@@ -10,9 +10,13 @@ def add_patch(img, patch, coord):
     h,w,_ = patch.shape
     x = max(0,min(coord[0], img.shape[1]-w-1))
     y = max(0,min(coord[1], img.shape[0]-h-1))
-    img[y:y+h, x:x+w] = patch
+    tmp = img[y:y+h, x:x+w]
+    good = patch.sum(axis=-1) > 50
+    if tuple(tmp.shape) != tuple(patch.shape): return False
+    tmp[good] = patch[good]
     coord[0]=x
     coord[1]=y
+    return True
 
 def get_movement(img, strength):
     dw = int((torch.rand(1)-.5)*img.shape[1]*strength)
@@ -26,7 +30,7 @@ def augment(patch, img_h=999, img_w=999):
     if r[2]>.0: #resize
         w,h = int(patch.shape[1]*(.86+.28*r[3])), int(patch.shape[0]*(.9+.2*r[3]))
         w,h = max(w,16), max(h,16)
-        w,h = min(img_w//4,w), min(img_h//4,h)
+        w,h = min(img_w-10,w), min(img_h-10,h)
         patch = cv2.resize(patch, (w,h))
 
     assert patch.shape[1] / patch.shape[0] <10, patch.shape
@@ -39,7 +43,10 @@ def simulate(img, data):
         patch, coord, velocity, idx = data[i]
         # draw box
         if coord is not None and idx>=0:
-            add_patch(img, patch, coord)
+            success=add_patch(img, patch, coord)
+            if not success:
+                data[i][3] = -1
+                continue
             bb = [coord[0]+patch.shape[1]/2, coord[1]+patch.shape[0]/2, patch.shape[1], patch.shape[0]]
             gt_bb.append([int(b) for b in bb])
             gt_idx.append(idx)
@@ -72,10 +79,22 @@ class SynthData(torch.utils.data.Dataset):
         images  = [x for x in os.listdir(dir_path) if x != 'bg']
         for folder in images:
             crops = []
-            bg = cv2.imread(dir_path+'/bg/'+folder)
-            for img in os.listdir(dir_path+'/'+folder):
+            imgs = os.listdir(dir_path+'/'+folder)
+            patch_size = 64 if len(imgs)<10 else 12+ 48 / len(imgs)**.5
+            for img in imgs:
                 img = cv2.imread(dir_path+'/'+folder+'/'+img)
+                r = img.shape[0]/img.shape[1]
+                w,h = (patch_size, patch_size*r) if r > 1 else (patch_size/r, patch_size)
+                img = cv2.resize(img, (int(w), int(h)))
                 crops.append(img)
+            
+            if os.path.exists(dir_path+'/bg/'+folder):
+                bg = cv2.imread(dir_path+'/bg/'+folder)
+            else:
+                bg = (((img[0,0]*.999 + img[0,-1]) + img[-1,-1]) + img[-1,0])/4
+                if bg.sum() < 100: bg = np.random.rand(3)*255
+                bg = np.uint8(bg.reshape(1,1,-1).repeat(600,axis=0).repeat(800,axis=1))
+            
             samples.append((bg, crops))
         self.samples = samples
 
@@ -92,6 +111,8 @@ class SynthData(torch.utils.data.Dataset):
 
     def __len__(self):
         return 50 if self.args.small_dataset else 1000
+    
+    def set_epoch(self,epoch):pass
 
     def __getitem__(self, idx):
         bg_idx = (idx*2999) % len(self.bgs)
@@ -106,14 +127,14 @@ class SynthData(torch.utils.data.Dataset):
         base_bg = cv2.resize(base_bg, (bg.shape[1], bg.shape[0])) * bg
         _, distractions = self.samples[d_idx]
         for patch in distractions:
-            r = 0.5 + 0.5*torch.rand(1)
+            r = 0.5 + 0.5*torch.rand(1)**2
             patch = cv2.resize(patch, (int(patch.shape[1]*r), int(patch.shape[0]*r)))
             coord = [int(torch.rand(1)*base_bg.shape[1]), int(torch.rand(1)*base_bg.shape[0])]
             add_patch(base_bg, patch, coord)
         scale = [608, 640, 672, 704, 736, 768, 800,][int(torch.rand(1)*7)]
         base_bg = cv2.resize(base_bg, (scale, int(scale*base_bg.shape[0]/base_bg.shape[1])))
 
-        r = max((60-(len(crops)*(.6+.4*torch.rand(1)))+torch.rand(1)*40 )/2, 16)/ min(crops[0].shape[:2])
+        r = (torch.rand(1)**2).item() + .8
         for i in range(len(crops)):
             crops[i] = cv2.resize(crops[i], (int(crops[i].shape[1]*r), int(crops[i].shape[0]*r)))
 
@@ -122,7 +143,7 @@ class SynthData(torch.utils.data.Dataset):
         for i, patch in enumerate(crops):
             coord = [int(torch.rand(1)*base_bg.shape[1]), int(torch.rand(1)*base_bg.shape[0])]
             velocity = get_movement(base_bg, 0.05)
-            if i<2: coord=None
+            if i<min(2, len(data)-2): coord=None
             data.append([patch, coord, [base_v[0]+velocity[0], base_v[1]+velocity[1]], idx*1000 + i])
 
         # exemplar
@@ -137,7 +158,7 @@ class SynthData(torch.utils.data.Dataset):
             img, gt_bb, gt_idx = simulate(base_bg.copy(), data)
             images.append(F.normalize(F.to_tensor(img[:,:,::-1]/255), (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)).float())
             inst = Instances((1,1))
-            inst.boxes = torch.tensor(gt_bb) / torch.tensor([[base_bg.shape[1], base_bg.shape[0], base_bg.shape[1], base_bg.shape[0]]])
+            inst.boxes = torch.tensor(gt_bb).view(-1,4) / torch.tensor([[base_bg.shape[1], base_bg.shape[0], base_bg.shape[1], base_bg.shape[0]]])
             inst.obj_ids = torch.tensor(gt_idx).long()
             inst.labels = torch.zeros_like(inst.obj_ids)
             gt_instances.append(inst)
@@ -145,6 +166,7 @@ class SynthData(torch.utils.data.Dataset):
             j=0
             while exemplar is None:
                 j-=1
+                if -j==len(gt_bb): return self.__getitem__(42)
                 x,y,w,h = gt_bb[j]
                 exe = images[-1][:, y-h//2:y+h//2, x-w//2:x+w//2]
                 bb = inst.boxes[-1]
@@ -168,3 +190,6 @@ def rotate_img(img, angle, bg_patch=(5,5)):
     mask = [img <= 0, np.any(img <= 0, axis=-1)][rgb]
     img[mask] = bg_color
     return np.uint8(img)
+
+def build(a, args):
+    return SynthData(args)

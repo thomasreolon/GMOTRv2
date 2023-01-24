@@ -4,3 +4,8 @@
 --mot17_path /home/user/datasets/MOT17
 --mot20_path /home/user/datasets/MOT20
 --crowd_path /home/user/datasets/crowdhuman
+
+
+--bmn_pretrained /home/intern/Desktop/GMOTRv2/outputs/motr/bmn.pth
+
+--pretrained /home/intern/Desktop/GMOTRv2/outputs/best.pth

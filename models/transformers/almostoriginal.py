@@ -12,15 +12,74 @@ from __future__ import absolute_import
 from __future__ import print_function
 from __future__ import division
 
+import warnings
 import copy
 import math
 
 from util.misc import inverse_sigmoid
 
 from torch import nn
-from torch.nn.init import eye_, constant_, normal_
+from torch.nn.init import xavier_uniform_, constant_, normal_
 import torch
 import torch.nn.functional as F
+from torch.autograd import Function
+from torch.autograd.function import once_differentiable
+
+### """"""CPU/GPU IMPLEMENTATION"""""""  (unelegant hack to make the code work with CPU too)
+class MSDeformAttnFunction():
+    @staticmethod
+    def apply(value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights, im2col_step):
+        # for debug and test only,
+        # need to use cuda version instead
+        N_, S_, M_, D_ = value.shape
+        _, Lq_, M_, L_, P_, _ = sampling_locations.shape
+        value_list = value.split([H_ * W_ for H_, W_ in value_spatial_shapes], dim=1)
+        sampling_grids = 2 * sampling_locations - 1
+        sampling_value_list = []
+        for lid_, (H_, W_) in enumerate(value_spatial_shapes):
+            # N_, H_*W_, M_, D_ -> N_, H_*W_, M_*D_ -> N_, M_*D_, H_*W_ -> N_*M_, D_, H_, W_
+            value_l_ = value_list[lid_].flatten(2).transpose(1, 2).reshape(N_*M_, D_, H_, W_)
+            # N_, Lq_, M_, P_, 2 -> N_, M_, Lq_, P_, 2 -> N_*M_, Lq_, P_, 2
+            sampling_grid_l_ = sampling_grids[:, :, :, lid_].transpose(1, 2).flatten(0, 1)
+            # N_*M_, D_, Lq_, P_
+            sampling_value_l_ = F.grid_sample(value_l_, sampling_grid_l_,
+                                            mode='bilinear', padding_mode='zeros', align_corners=False)
+            sampling_value_list.append(sampling_value_l_)
+        # (N_, Lq_, M_, L_, P_) -> (N_, M_, Lq_, L_, P_) -> (N_, M_, 1, Lq_, L_*P_)
+        attention_weights = attention_weights.transpose(1, 2).reshape(N_*M_, 1, Lq_, L_*P_)
+        output = (torch.stack(sampling_value_list, dim=-2).flatten(-2) * attention_weights).sum(-1).view(N_, M_*D_, Lq_)
+        return output.transpose(1, 2).contiguous()
+
+
+########## GPU IMPLEMENTATION
+try:
+    import MultiScaleDeformableAttention as MSDA
+    class MSDeformAttnFunction(Function):
+        @staticmethod
+        def forward(ctx, value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights, im2col_step):
+            ctx.im2col_step = im2col_step
+            output = MSDA.ms_deform_attn_forward(
+                value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights, ctx.im2col_step)
+            ctx.save_for_backward(value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights)
+            return output
+
+        @staticmethod
+        @once_differentiable
+        def backward(ctx, grad_output):
+            value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights = ctx.saved_tensors
+            grad_value, grad_sampling_loc, grad_attn_weight = \
+                MSDA.ms_deform_attn_backward(
+                    value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights, grad_output, ctx.im2col_step)
+
+            return grad_value, None, None, grad_sampling_loc, grad_attn_weight, None
+except:
+    print('CUDA implementation of DefAttn not found... using pytorch general implementation')
+
+def _is_power_of_2(n):
+    if (not isinstance(n, int)) or (n < 0):
+        raise ValueError("invalid input for _is_power_of_2: {} (type: {})".format(n, type(n)))
+    return (n & (n-1) == 0) and n != 0
+
 
 class MSDeformAttn(nn.Module):
     def __init__(self, d_model=256, n_levels=4, n_heads=8, n_points=4, sigmoid_attn=False):
@@ -32,17 +91,27 @@ class MSDeformAttn(nn.Module):
         :param n_points     number of sampling points per attention head per feature level
         """
         super().__init__()
+        if d_model % n_heads != 0:
+            raise ValueError('d_model must be divisible by n_heads, but got {} and {}'.format(d_model, n_heads))
+        _d_per_head = d_model // n_heads
+        # you'd better set _d_per_head to a power of 2 which is more efficient in our CUDA implementation
+        if not _is_power_of_2(_d_per_head):
+            warnings.warn("You'd better set d_model in MSDeformAttn to make the dimension of each attention head a power of 2 "
+                          "which is more efficient in our CUDA implementation.")
+
+        self.im2col_step = 64
+        self.sigmoid_attn = sigmoid_attn
+
         self.d_model = d_model
         self.n_levels = n_levels
         self.n_heads = n_heads
         self.n_points = n_points
 
         self.sampling_offsets = nn.Linear(d_model, n_heads * n_levels * n_points * 2)
-        self.attention_weights = nn.ModuleList([
-            nn.Linear(d_model,d_model, bias=False) for _ in range(n_heads * (n_levels+1))
-        ])
-        self.value_proj = nn.ModuleList([ nn.Linear(d_model, d_model) for _ in range(n_heads * 2 * (n_levels+1)) ])
-        self.head_mixer = nn.Linear(self.n_heads+1, self.d_model, bias=False)
+        self.attention_weights = nn.Linear(d_model, n_heads * n_levels * n_points)
+        self.value_proj = nn.Linear(d_model, d_model)
+        self.value_proj2 = nn.Linear(d_model, d_model)
+        self.output_proj = nn.Linear(d_model, d_model)
 
         self._reset_parameters()
 
@@ -55,13 +124,17 @@ class MSDeformAttn(nn.Module):
             grid_init[:, :, i, :] *= i + 1
         with torch.no_grad():
             self.sampling_offsets.bias = nn.Parameter(grid_init.view(-1))
-        [eye_(w.weight.data) for w in self.attention_weights]
-        [eye_(w.weight.data) for w in self.value_proj]
-        constant_(self.head_mixer.weight.data, 0.)
+        constant_(self.attention_weights.weight.data, 0.)
+        constant_(self.attention_weights.bias.data, 0.)
+        xavier_uniform_(self.value_proj.weight.data)
+        constant_(self.value_proj.bias.data, 0.)
+        self.value_proj2.weight.data = self.value_proj.weight.data
+        constant_(self.value_proj2.bias.data, 0.)
+        xavier_uniform_(self.output_proj.weight.data)
+        constant_(self.output_proj.bias.data, 0.)
 
-
-    def forward(self, query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index,input_padding_mask=None, add_keys=None):
-        """input_padding_mask
+    def forward(self, query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index, input_padding_mask=None):
+        """
         :param query                       (N, Length_{query}, C)
         :param reference_points            (N, Length_{query}, n_levels, 2), range in [0, 1], top-left (0,0), bottom-right (1, 1), including padding area
                                         or (N, Length_{query}, n_levels, 4), add additional (w, h) to form reference boxes
@@ -69,17 +142,26 @@ class MSDeformAttn(nn.Module):
         :param input_spatial_shapes        (n_levels, 2), [(H_0, W_0), (H_1, W_1), ..., (H_{L-1}, W_{L-1})]
         :param input_level_start_index     (n_levels, ), [0, H_0*W_0, H_0*W_0+H_1*W_1, H_0*W_0+H_1*W_1+H_2*W_2, ..., H_0*W_0+H_1*W_1+...+H_{L-1}*W_{L-1}]
         :param input_padding_mask          (N, \sum_{l=0}^{L-1} H_l \cdot W_l), True for padding elements, False for non-padding elements
-        :param add_keys                    (N, Length_{x}, C)
 
         :return output                     (N, Length_{query}, C)
         """
         N, Len_q, _ = query.shape
         N, Len_in, _ = input_flatten.shape
         assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in
-        assert N==1, "thought for batch size=1 only"
 
+        last_fmap = input_level_start_index[-1]
+        value = self.value_proj(input_flatten[:,:last_fmap])
+        value2 = self.value_proj(input_flatten[:,last_fmap:])
+        value = torch.cat((value, value2), dim=1)
+        if input_padding_mask is not None:
+            value.masked_fill_(input_padding_mask[..., None], float(0))
+        value = value.view(N, Len_in, self.n_heads, self.d_model // self.n_heads)
         sampling_offsets = self.sampling_offsets(query).view(N, Len_q, self.n_heads, self.n_levels, self.n_points, 2)
-        
+        attention_weights = self.attention_weights(query).view(N, Len_q, self.n_heads, self.n_levels * self.n_points)
+        if self.sigmoid_attn:
+            attention_weights = attention_weights.sigmoid().view(N, Len_q, self.n_heads, self.n_levels, self.n_points)
+        else:
+            attention_weights = F.softmax(attention_weights, -1).view(N, Len_q, self.n_heads, self.n_levels, self.n_points)
         # N, Len_q, n_heads, n_levels, n_points, 2
         if reference_points.shape[-1] == 2:
             sampling_locations = reference_points[:, :, None, :, None, :] \
@@ -90,52 +172,10 @@ class MSDeformAttn(nn.Module):
         else:
             raise ValueError(
                 'Last dim of reference_points must be 2 or 4, but get {} instead.'.format(reference_points.shape[-1]))
-
-        # attention
-        if add_keys is not None: add_keys=add_keys.view(-1,self.d_model)
-        keys = self.get_keys(sampling_locations, input_flatten, input_spatial_shapes, input_level_start_index).view(
-            N*Len_q, self.n_heads, self.n_levels, self.n_points, self.d_model
-        )
-        keys = keys.permute(1,2,3,0,4).contiguous()
-        head_w = self.head_mixer.weight.T.softmax(dim=0) # 3, 256
-        result = query.view(-1, self.d_model) * head_w[None,-1]
-        for h in range(self.n_heads): # (Q@W@K.T) (W@K).T
-            # similarity queries/pixels
-            attn_matrix = []
-            values = []
-            for lvl in range(self.n_levels+1):
-                simil = self.attention_weights[h*self.n_levels+lvl].weight
-                if lvl != self.n_levels:
-                    val = self.value_proj[h*self.n_levels+lvl](keys[h, lvl].view(-1,self.d_model)).view(self.n_points, N*Len_q, self.d_model)
-                    ki = simil @ keys[h, lvl].view(-1,self.d_model).T
-                    ki = ki.view(self.n_points, N*Len_q, self.d_model)
-                    attn = (ki * query.view(-1,self.d_model)[None]).sum(dim=-1) #n_points,N
-                elif add_keys is not None:
-                    val = self.value_proj[h*self.n_levels+lvl](add_keys).view(len(add_keys), 1, self.d_model).expand(-1,N*Len_q,-1)
-                    ki = add_keys @ simil.T
-                    attn = ki @ query.view(-1,self.d_model).T  # X,N
-                else: continue
-                attn_matrix.append(attn)
-                values.append(val)
-            attn_matrix = (torch.cat(attn_matrix, dim=0) / math.sqrt(self.d_model) ).softmax(dim=0)  #lvls*n_points+X, N
-            # output as linear proj of pixels
-            values = torch.cat(values)# lvls*n_points+X, N, dim
-            # values weighted to attn_matrix
-            result = result + (attn_matrix[:,:,None] * values).sum(dim=0) * head_w[None, h]
-        return result[None]
-
-    def get_keys(self, sampling_locations, input_flatten, iss, input_level_start_index):
-        keys = []
-        # N   Len_q   n_heads   n_levels   n_points
-        sampling_locations = torch.clamp(sampling_locations, min=0, max=0.999)
-
-        idx = (sampling_locations*iss.view(1,1,1,-1,1,2)).int()     # h*H, w*W
-        idx[:,:,:,:,:,1] *= iss[:,0].view(1,1,1,-1,1)               #int(h*H)*W
-        idx = idx.sum(dim=-1) + input_level_start_index.view(1,1,1,-1,1)  # int(h*H)*W + w*W + index_lvl
-
-        keys = input_flatten[0, idx.view(-1), :] # BS=1
-
-        return keys
+        output = MSDeformAttnFunction.apply(
+            value, input_spatial_shapes, input_level_start_index, sampling_locations, attention_weights, self.im2col_step)
+        output = self.output_proj(output)
+        return output
 
 
 
@@ -163,7 +203,7 @@ class DeformableTransformer(nn.Module):
 
         decoder_layer = DeformableTransformerDecoderLayer(d_model, dim_feedforward,
                                                           dropout, activation,
-                                                          num_feature_levels, 8, dec_n_points, decoder_self_cross,
+                                                          num_feature_levels, nhead, dec_n_points, decoder_self_cross,
                                                           sigmoid_attn=sigmoid_attn, extra_track_attn=extra_track_attn,
                                                           memory_bank=memory_bank)
         self.decoder = DeformableTransformerDecoder(decoder_layer, num_decoder_layers, return_intermediate_dec)
@@ -246,8 +286,6 @@ class DeformableTransformer(nn.Module):
 
     def forward(self, srcs, masks, pos_embeds, query_embed=None, ref_pts=None, mem_bank=None, mem_bank_pad_mask=None, attn_mask=None):
         assert self.two_stage or query_embed is not None
-        add_keys = srcs.pop(-1) ; masks.pop(-1) ; pos_embeds.pop(-1)
-        add_keys = add_keys.flatten(2).permute(0,2,1) # B, 8, C
 
         # prepare input for encoder
         src_flatten = []
@@ -273,7 +311,7 @@ class DeformableTransformer(nn.Module):
         valid_ratios = torch.stack([self.get_valid_ratio(m) for m in masks], 1)
 
         # encoder
-        memory = self.encoder(src_flatten, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten, add_keys)
+        memory = self.encoder(src_flatten, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
         # prepare input for decoder
         bs, _, c = memory.shape
         if self.two_stage:
@@ -299,7 +337,7 @@ class DeformableTransformer(nn.Module):
         hs, inter_references = self.decoder(tgt, reference_points, memory,
                                             spatial_shapes, level_start_index,
                                             valid_ratios, mask_flatten,
-                                            mem_bank, mem_bank_pad_mask, attn_mask, add_keys)
+                                            mem_bank, mem_bank_pad_mask, attn_mask)
 
         inter_references_out = inter_references
         if self.two_stage:
@@ -315,7 +353,7 @@ class DeformableTransformerEncoderLayer(nn.Module):
         super().__init__()
 
         # self attention
-        self.self_attn = MSDeformAttn(d_model, n_levels, n_heads, n_points)
+        self.self_attn = MSDeformAttn(d_model, n_levels, n_heads, n_points, sigmoid_attn=sigmoid_attn)
         self.dropout1 = nn.Dropout(dropout)
         self.norm1 = nn.LayerNorm(d_model)
 
@@ -337,9 +375,9 @@ class DeformableTransformerEncoderLayer(nn.Module):
         src = self.norm2(src)
         return src
 
-    def forward(self, src, pos, reference_points, spatial_shapes, level_start_index, padding_mask=None, add_keys=None):
+    def forward(self, src, pos, reference_points, spatial_shapes, level_start_index, padding_mask=None):
         # self attention
-        src2 = self.self_attn(self.with_pos_embed(src, pos), reference_points, src, spatial_shapes, level_start_index, padding_mask, add_keys=add_keys)
+        src2 = self.self_attn(self.with_pos_embed(src, pos), reference_points, src, spatial_shapes, level_start_index, padding_mask)
         src = src + self.dropout1(src2)
         src = self.norm1(src)
 
@@ -370,12 +408,11 @@ class DeformableTransformerEncoder(nn.Module):
         reference_points = reference_points[:, :, None] * valid_ratios[:, None]
         return reference_points
 
-    def forward(self, src, spatial_shapes, level_start_index, valid_ratios, pos=None, padding_mask=None, add_keys=None):
+    def forward(self, src, spatial_shapes, level_start_index, valid_ratios, pos=None, padding_mask=None):
         output = src
         reference_points = self.get_reference_points(spatial_shapes, valid_ratios, device=src.device)
-        for i, layer in enumerate(self.layers):
-            add = add_keys[:,[0,-2]]
-            output = layer(output, pos, reference_points, spatial_shapes, level_start_index, padding_mask, add)
+        for _, layer in enumerate(self.layers):
+            output = layer(output, pos, reference_points, spatial_shapes, level_start_index, padding_mask)
 
         return output
 
@@ -470,14 +507,14 @@ class DeformableTransformerDecoderLayer(nn.Module):
 
 
     def _forward_self_cross(self, tgt, query_pos, reference_points, src, src_spatial_shapes, level_start_index,
-                            src_padding_mask=None, attn_mask=None, add_keys=None):
+                            src_padding_mask=None, attn_mask=None):
 
         # self attention
         tgt = self._forward_self_attn(tgt, query_pos, attn_mask)
         # cross attention
         tgt2 = self.cross_attn(self.with_pos_embed(tgt, query_pos),
                                reference_points,
-                               src, src_spatial_shapes, level_start_index, src_padding_mask, add_keys)
+                               src, src_spatial_shapes, level_start_index, src_padding_mask)
         tgt = tgt + self.dropout1(tgt2)
         tgt = self.norm1(tgt)
 
@@ -487,11 +524,11 @@ class DeformableTransformerDecoderLayer(nn.Module):
         return tgt
 
     def _forward_cross_self(self, tgt, query_pos, reference_points, src, src_spatial_shapes, level_start_index,
-                            src_padding_mask=None, attn_mask=None, add_keys=None):
+                            src_padding_mask=None, attn_mask=None):
         # cross attention
         tgt2 = self.cross_attn(self.with_pos_embed(tgt, query_pos),
                                reference_points,
-                               src, src_spatial_shapes, level_start_index, src_padding_mask, add_keys)
+                               src, src_spatial_shapes, level_start_index, src_padding_mask)
         tgt = tgt + self.dropout1(tgt2)
         tgt = self.norm1(tgt)
         # self attention
@@ -501,13 +538,12 @@ class DeformableTransformerDecoderLayer(nn.Module):
 
         return tgt
 
-    def forward(self, tgt, query_pos, reference_points, src, src_spatial_shapes, level_start_index, 
-                src_padding_mask=None, mem_bank=None, mem_bank_pad_mask=None, attn_mask=None, add_keys=None):
+    def forward(self, tgt, query_pos, reference_points, src, src_spatial_shapes, level_start_index, src_padding_mask=None, mem_bank=None, mem_bank_pad_mask=None, attn_mask=None):
         if self.self_cross:
             return self._forward_self_cross(tgt, query_pos, reference_points, src, src_spatial_shapes,
-                                            level_start_index, src_padding_mask, attn_mask, add_keys)
+                                            level_start_index, src_padding_mask, attn_mask)
         return self._forward_cross_self(tgt, query_pos, reference_points, src, src_spatial_shapes, level_start_index,
-                                        src_padding_mask, attn_mask, add_keys)
+                                        src_padding_mask, attn_mask)
 
 
 def pos2posemb(pos, num_pos_feats=64, temperature=10000):
@@ -531,7 +567,7 @@ class DeformableTransformerDecoder(nn.Module):
         self.class_embed = None
 
     def forward(self, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios,
-                src_padding_mask=None, mem_bank=None, mem_bank_pad_mask=None, attn_mask=None, add_keys=None):
+                src_padding_mask=None, mem_bank=None, mem_bank_pad_mask=None, attn_mask=None):
         output = tgt
 
         intermediate = []
@@ -545,7 +581,7 @@ class DeformableTransformerDecoder(nn.Module):
                 reference_points_input = reference_points[:, :, None] * src_valid_ratios[:, None]
             query_pos = pos2posemb(reference_points)
             output = layer(output, query_pos, reference_points_input, src, src_spatial_shapes,
-                           src_level_start_index, src_padding_mask, mem_bank, mem_bank_pad_mask, attn_mask, add_keys)
+                           src_level_start_index, src_padding_mask, mem_bank, mem_bank_pad_mask, attn_mask)
 
             # hack implementation for iterative bounding box refinement
             if self.bbox_embed is not None:
@@ -596,7 +632,7 @@ def build_deforamble_transformer(args):
         dropout=args.dropout,
         activation="relu",
         return_intermediate_dec=True,
-        num_feature_levels=args.num_feature_levels,
+        num_feature_levels=args.num_feature_levels+1,
         dec_n_points=args.dec_n_points,
         enc_n_points=args.enc_n_points,
         two_stage=args.two_stage,

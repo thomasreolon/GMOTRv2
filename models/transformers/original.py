@@ -110,7 +110,6 @@ class MSDeformAttn(nn.Module):
         self.sampling_offsets = nn.Linear(d_model, n_heads * n_levels * n_points * 2)
         self.attention_weights = nn.Linear(d_model, n_heads * n_levels * n_points)
         self.value_proj = nn.Linear(d_model, d_model)
-        self.value_proj2 = nn.Linear(d_model, d_model)
         self.output_proj = nn.Linear(d_model, d_model)
 
         self._reset_parameters()
@@ -128,8 +127,6 @@ class MSDeformAttn(nn.Module):
         constant_(self.attention_weights.bias.data, 0.)
         xavier_uniform_(self.value_proj.weight.data)
         constant_(self.value_proj.bias.data, 0.)
-        self.value_proj2.weight.data = self.value_proj.weight.data
-        constant_(self.value_proj2.bias.data, 0.)
         xavier_uniform_(self.output_proj.weight.data)
         constant_(self.output_proj.bias.data, 0.)
 

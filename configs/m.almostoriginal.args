@@ -1,0 +1,2 @@
+--meta_arch deformable_detr2
+--num_queries 300

@@ -201,7 +201,8 @@ def visualize_gt(data_dict, output_dir, i=0):
     exemplar = _debug_frame(data_dict['exemplar'][0], exe_scale)
     h1,h2 = H//3, H//3 +exemplar.shape[0]
     w1,w2 = W//3, W//3 +exemplar.shape[1]
-    imgs[-1][h1:h2, w1:w2] = exemplar
+    h2,w2 = min(h2, imgs[-1].shape[0]), min(w2, imgs[-1].shape[1])
+    imgs[-1][h1:h2, w1:w2] = exemplar[:h2-H//3, :w2-W//3]
 
     # unique image
     imgs = np.stack(imgs).reshape(num_rows, num_cols, H,W,3)

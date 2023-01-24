@@ -1,4 +1,4 @@
---dataset_file e2e_synth
+--dataset_file joint_synth
 
 --epochs 10
 
