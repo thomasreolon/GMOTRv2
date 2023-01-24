@@ -142,6 +142,9 @@ def main(args):
 
     print("Start training")
     start_time = time.time()
+    name  = args.meta_arch
+    name += '_catexe' if args.concatenate_exemplar else ''
+    name += '_bmn' if args.use_bmn else ''
 
     dataset_train.set_epoch(args.start_epoch)
     for epoch in range(args.start_epoch, args.epochs):
@@ -152,7 +155,7 @@ def main(args):
     
         lr_scheduler.step()
         if args.output_dir:
-            checkpoint_paths = [output_dir / f'checkpoint.pth', output_dir / f'checkpoint_{args.dec_layers}_{args.meta_arch}_{args.extract_exe_from_img}.pth']
+            checkpoint_paths = [output_dir / f'checkpoint_{name}.pth']
             # extra checkpoint before LR drop and every 5 epochs
             if (epoch + 1) % args.lr_drop == 0 or args.epochs-1==epoch or (epoch + 1) % args.save_period == 0 or (((args.epochs >= 100 and (epoch + 1) > 100) or args.epochs < 100) and (epoch + 1) % 5 == 0):
                 checkpoint_paths.append(output_dir / f'checkpoint.pth')

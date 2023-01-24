@@ -91,6 +91,7 @@ class FSCDataset(Dataset):
         return [img], [target], [exe]
 
     def __getitem__(self, idx):
+        idx = idx%len(self.detections)
         images, targets, exemplar = self._pre_single_frame(idx)
         if self.transform is not None:
             images, targets = self.transform(images, targets)
@@ -129,7 +130,7 @@ class FSCDataset(Dataset):
                         break
             if std>1:break
         
-        if crop is None or ycrop.numel()==0:
+        if crop is None or crop.numel()==0:
             return self._old_get_exemplar(img,target)
         return [crop]
 
@@ -147,7 +148,7 @@ class FSCDataset(Dataset):
             crop = img[:, bb[1]:bb[1]+4, bb[0]:bb[0]+4]
         elif min_dim==0 or max(crop.shape[1:])/min(crop.shape[1:])>5:
             # get next box in case of errors
-            return self.get_exemplar(img, target, p+1)
+            return self._old_get_exemplar(img, target, p+1)
         return [crop]
 
     def set_epoch(self, epoch):

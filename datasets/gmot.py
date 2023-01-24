@@ -90,6 +90,7 @@ class GMOTDataset(Dataset):
         return gt_instances
 
     def __getitem__(self, idx):
+        idx = idx%len(self)
         vid, f_index = self.indices[idx]
         indices = self.sample_indices(vid, f_index)
         images, targets = self.pre_continuous_frames(vid, indices)

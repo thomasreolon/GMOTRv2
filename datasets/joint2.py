@@ -9,19 +9,20 @@ class JOINTFSCD(torch.utils.data.Dataset):
 
         self.datasets = datasets
         self.args = args
-        
-        lens = [len(d) for d in self.datasets]
-        for i in range(1,len(lens)):
-            lens[i] += lens[i-1]
-        self.lens = lens
+        self.lens = [len(d) for d in datasets]
 
     def __len__(self):
-        return self.lens[-1]
+        return sum(self.lens)
     
     def __getitem__(self, idx):
-        for d_num, d_items in enumerate(self.lens):
-            if idx < d_items:
-                return self.datasets[d_num] [d_items-idx]
+        try:
+            for dataset in self.datasets:
+                d_len = len(dataset)
+                if idx < d_len:
+                    return dataset[idx]
+                idx -= d_len
+        except: pass
+        return dataset[0] #should never happen
 
     def set_epoch(*a,**b):pass
 
