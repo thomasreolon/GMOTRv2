@@ -1,2 +1,3 @@
 --meta_arch deformable_detr2
+--concatenate_exemplar
 --num_queries 300

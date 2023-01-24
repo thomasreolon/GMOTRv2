@@ -1,5 +1,6 @@
 --meta_arch deformable_lowdimk
 --num_queries 300
+--concatenate_exemplar
 
 --nheads 1
 --dec_layers 6

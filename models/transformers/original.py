@@ -636,6 +636,7 @@ def _get_activation_fn(activation):
 
 
 def build_deforamble_transformer(args):
+    e_level = int(args.concatenate_exemplar)
     return DeformableTransformer(
         d_model=args.hidden_dim,
         nhead=args.nheads,
@@ -645,7 +646,7 @@ def build_deforamble_transformer(args):
         dropout=args.dropout,
         activation="relu",
         return_intermediate_dec=True,
-        num_feature_levels=args.num_feature_levels+1,
+        num_feature_levels=args.num_feature_levels+e_level,
         dec_n_points=args.dec_n_points,
         enc_n_points=args.enc_n_points,
         two_stage=args.two_stage,

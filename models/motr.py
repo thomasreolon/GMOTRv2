@@ -442,8 +442,12 @@ class MOTR(nn.Module):
         self.query_denoise = args.query_denoise
         self.position = nn.Embedding(args.num_queries, 4)
         self.yolox_embed = nn.Embedding(1, hidden_dim)
-        self.query_embed = nn.Embedding(args.num_queries, hidden_dim)
         self.query_exemplar = nn.Linear(4, hidden_dim)
+        if args.use_expanded_query:
+            self.query_embed = nn.Embedding(1, hidden_dim)
+        else:
+            self.query_embed = nn.Embedding(args.num_queries, hidden_dim)
+
         if args.query_denoise:
             self.refine_embed = nn.Embedding(1, hidden_dim)
         if args.num_feature_levels > 1:
@@ -509,16 +513,17 @@ class MOTR(nn.Module):
         self.memory_bank = args.memory_bank_type
         self.mem_bank_len = 0 if args.memory_bank_type is None else self.memory_bank.max_his_length
 
-    def _generate_empty_tracks(self, proposals=None):
+    def _generate_empty_tracks(self):
         track_instances = Instances((1, 1))
         _, d_model = self.query_embed.weight.shape  # (300, 512)
         device = self.query_embed.weight.device
-        if proposals is None:
-            track_instances.ref_pts = self.position.weight
-            track_instances.query_pos = self.query_embed.weight
+
+        track_instances.ref_pts = self.position.weight
+        if self.args.use_expanded_query:
+            track_instances.query_pos = self.query_embed.weight.expand(self.num_queries, -1)
         else:
-            track_instances.ref_pts = torch.cat([self.position.weight, proposals[:, :4]])
-            track_instances.query_pos = torch.cat([self.query_embed.weight, pos2posemb(proposals[:, 4:], d_model) + self.yolox_embed.weight])
+            track_instances.query_pos = self.query_embed.weight
+
         track_instances.output_embedding = torch.zeros((len(track_instances), d_model), device=device)
         track_instances.obj_idxes = torch.full((len(track_instances),), -1, dtype=torch.long, device=device)
         track_instances.matched_gt_idxes = torch.full((len(track_instances),), -1, dtype=torch.long, device=device)
@@ -555,9 +560,10 @@ class MOTR(nn.Module):
         exefeatures=self._extract_exemplar_features(exemplar)
 
         ## hack: Add exemplar extracted exemplar features as a new scale (self-cross-attn Image/Exemplar in the decoder)
-        srcs.append(exefeatures)
-        masks.append(torch.zeros_like(exefeatures[:,0]).bool())
-        pos.append(torch.zeros_like(exefeatures))
+        if self.args.concatenate_exemplar:
+            srcs.append(exefeatures)
+            masks.append(torch.zeros_like(exefeatures[:,0]).bool())
+            pos.append(torch.zeros_like(exefeatures))
 
         ## Add GT to guide Learning
         if gtboxes is not None:
