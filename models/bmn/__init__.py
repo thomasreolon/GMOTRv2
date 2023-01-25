@@ -33,7 +33,11 @@ class BMNProposer(torch.nn.Module):
         # get proposals
         res = self.model(image, patch, True)
         interest = res['density_map'][0,0] #HW
-        loss, count_map = self._loss(interest, res['corr_map'], gt_boxes)
+
+        # compute loss if GT was given
+        loss, count_map = 0, None
+        if gt_boxes is not None:
+            loss, count_map = self._loss(interest, res['corr_map'], gt_boxes)
 
         # generate q_refs from proposals
         good_pixels1 = torch.zeros_like(interest).bool()
@@ -43,7 +47,14 @@ class BMNProposer(torch.nn.Module):
         c4 = interest[:, 1: ] >  interest[:, :-1]  # bigger than right
 
         good_pixels1[1:-1, 1:-1] = c1[1:, 1:-1] & c2[:-1, 1:-1] & c3[1:-1, 1:] & c4[1:-1, :-1]
-        good_pixels2 = interest > interest.max()/3
+        
+        min_score = 0.4
+        while True:
+            ## Limits number of proposals
+            good_pixels2 = interest > interest.max()*min_score
+            if (good_pixels1 & good_pixels2).sum() < self.args.num_queries:
+                break
+            min_score += 0.1
 
         ref_pts = None
         if (good_pixels1 & good_pixels2).any(): 
@@ -55,12 +66,13 @@ class BMNProposer(torch.nn.Module):
             bb = torch.tensor([[exemplar.shape[3]/image.shape[3],  exemplar.shape[2]/image.shape[2]]], device=device).expand(xy.shape[0], -1)
             ref_pts = torch.cat((xy,bb),dim=1)
         
-            if self.args.debug and torch.rand(1)>0.98:
+            if self.args.debug and count_map is not None and gt_boxes is not None and torch.rand(1)>0.98:
                 self._debug_visualization(image, xy, interest, res['corr_map'], count_map)
 
         return ref_pts, loss   # Nx4
 
     def _loss(self, density_map, corr_map, boxes):
+        if not torch.is_grad_enabled(): return torch.zeros(1), None
         # GT heatmap
         with torch.no_grad():
             count_map = torch.zeros_like(density_map)

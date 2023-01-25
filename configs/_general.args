@@ -1,4 +1,4 @@
---dataset_file joint_fscd_synth_gmot
+--dataset_file joint_synth
 
 --epochs 10
 

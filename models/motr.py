@@ -497,7 +497,7 @@ class MOTR(nn.Module):
         self.mem_bank_len = 0 if args.memory_bank_type is None else self.memory_bank.max_his_length
         self.show_frame = 0
 
-    def _generate_empty_tracks(self):
+    def _generate_empty_tracks(self, already_existing=0):
         track_instances = Instances((1, 1))
         _, d_model = self.query_embed.weight.shape  # (300, 512)
         device = self.query_embed.weight.device
@@ -522,6 +522,10 @@ class MOTR(nn.Module):
         track_instances.mem_bank = torch.zeros((len(track_instances), mem_bank_len, d_model), dtype=torch.float32, device=device)
         track_instances.mem_padding_mask = torch.ones((len(track_instances), mem_bank_len), dtype=torch.bool, device=device)
         track_instances.save_period = torch.zeros((len(track_instances), ), dtype=torch.float32, device=device)
+
+        if already_existing>400:
+            ### less detection queries if already heavy
+            track_instances = track_instances[:10]
 
         return track_instances.to(self.query_embed.weight.device)
 
@@ -558,8 +562,8 @@ class MOTR(nn.Module):
         # proposals from agnostic counting
         proposed, c_loss = None, 0
         if self.args.use_bmn:
-            gt_instances_i = self.criterion.gt_instances[self.criterion._current_frame_idx-1]
-            proposed, c_loss = self.proposer(samples.tensors, exemplar.tensors, gt_boxes=gt_instances_i.boxes)
+            gt_boxes = self.criterion.gt_instances[self.criterion._current_frame_idx-1].boxes if self.training else None
+            proposed, c_loss = self.proposer(samples.tensors, exemplar.tensors, gt_boxes=gt_boxes)
             if proposed is not None:
                 pr_tgt = self.yolox_embed.weight.expand(proposed.size(0), -1)
                 query_embed = torch.cat([pr_tgt, query_embed])

@@ -29,6 +29,8 @@ from util.eval import compute_mota
 def main():
     # Info about code execution
     args = get_args_parser().parse_args()
+    if os.path.exists(f'{args.output_dir}/results/{args.resume.split("/")[-1][:-4]}.csv'):
+        print("##"*50, f"\n#  Already Processed: {args.resume} #\n", "##"*50, sep='') ; exit(0)
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # Build Model
@@ -85,7 +87,8 @@ def load_gmot(split, args):
         a = lines[:,4]*lines[:,5]
         scores= [(ii,rr,aa) for ii,rr,aa in zip(i,r,a)]
         scores.sort(key=lambda x:x[1])
-        scores = scores[4:-4]
+        slice = len(scores)//3
+        scores = scores[slice:-slice]
         scores.sort(key=lambda x:x[2])
         idx = scores[-1][0]
 
@@ -155,7 +158,7 @@ class ListImgDataset(Dataset):
 
     def __len__(self):
         return len(self.img_list)
-    
+
     def __getitem__(self, index):
         ori_img, img, exemplar, bb = self.load_img_from_file(self.img_list[index])
         return ori_img, img, exemplar, bb
@@ -168,13 +171,16 @@ class Detector(object):
         self.gmot = model
         self.dataset = dataset  # list of tuples: (/path/to/MOT/vidname, )
 
-        self.predict_path = os.path.join(self.args.output_dir, 'predictions', str(args.meta_arch)+str(args.dec_layers))
+        self.predict_path = os.path.join(self.args.output_dir, 'predictions', args.resume[:-4])
         os.makedirs(self.predict_path, exist_ok=True)
 
     @torch.no_grad()
     def detect(self, video=0):
-        self.gmot.track_base.clear()
         v_name = self.dataset[video][0].split('/')[-3]
+        if os.path.exists(str(self.predict_path)+f'/{v_name}.txt'):
+            print(v_name, 'already processed')
+            return
+        self.gmot.track_base.clear()
 
         loader = DataLoader(ListImgDataset(*self.dataset[video]), 1, num_workers=2)
         lines = []
@@ -201,7 +207,7 @@ class Detector(object):
 
 
 def load_for_eval(args):
-    ARCHITECTURE = ['use_exe_query', 'extract_exe_from_img', 'meta_arch', 'with_box_refine', 'two_stage', 'accurate_ratio', 'num_anchors', 'backbone', 'enable_fpn',  'position_embedding', 'num_feature_levels', 'enc_layers', 'dim_feedforward', 'num_queries', 'hidden_dim', 'dec_layers',  'nheads', 'enc_n_points', 'dec_n_points', 'decoder_cross_self', 'extra_track_attn', 'loss_normalizer']
+    ARCHITECTURE = ['use_expanded_query', 'concatenate_exemplar', 'use_bmn', 'meta_arch', 'with_box_refine', 'two_stage', 'accurate_ratio', 'num_anchors', 'backbone', 'enable_fpn',  'position_embedding', 'num_feature_levels', 'enc_layers', 'dim_feedforward', 'num_queries', 'hidden_dim', 'dec_layers',  'nheads', 'enc_n_points', 'dec_n_points', 'decoder_cross_self', 'extra_track_attn', 'loss_normalizer']
     checkpoint = torch.load(args.resume, map_location='cpu')
     if 'args' in checkpoint:
         old_args = checkpoint['args']
