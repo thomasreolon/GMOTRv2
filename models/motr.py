@@ -53,6 +53,7 @@ def build(args):
         weight_dict.update({"frame_{}_loss_ce".format(i): args.cls_loss_coef,
                             'frame_{}_loss_bbox'.format(i): args.bbox_loss_coef,
                             'frame_{}_loss_giou'.format(i): args.giou_loss_coef,
+                            'frame_{}_loss_overlap'.format(i): args.cls_loss_coef,
                             })
 
     # TODO this is a hack
@@ -163,6 +164,34 @@ class ClipMatcher(SetCriterion):
         losses['loss_giou'] = loss_giou.sum() / num_boxes
 
         return losses
+
+    def loss_overlap(self, outputs, active_idxs):
+        """
+        Penalizes predicting objects multiple times
+        """
+
+        with torch.no_grad():
+            good_boxes = outputs['pred_boxes'][0,active_idxs].view(-1,4)
+            bad_boxes = outputs['pred_boxes'][0, ~active_idxs].view(-1,4)
+            overlapping = box_ops.generalized_box_iou(
+                box_ops.box_cxcywh_to_xyxy(good_boxes),
+                box_ops.box_cxcywh_to_xyxy(bad_boxes))
+            overlapping = (overlapping**4 -.4) * 1.66 * (overlapping>0.8).float()
+
+        good_logits = outputs['pred_logits'][0, active_idxs].view(-1)
+        bad_logits = outputs['pred_logits'][0, ~active_idxs].view(1,-1).expand(len(good_logits),-1)
+        bad_logits = bad_logits * overlapping
+        good_logits = good_logits.exp()
+        bad_logits = bad_logits.exp()
+
+        overlapping_loss = - (good_logits / (good_logits+bad_logits.sum(dim=-1))).log()
+
+
+        losses = {
+            'loss_overlap': overlapping_loss.mean() / 4
+        }
+        return losses
+
 
     def loss_labels(self, outputs, gt_instances: List[Instances], indices, num_boxes, log=False):
         """Classification loss (NLL)
@@ -285,6 +314,12 @@ class ClipMatcher(SetCriterion):
                                            num_boxes=1)
             self.losses_dict.update(
                 {'frame_{}_{}'.format(self._current_frame_idx, key): value for key, value in new_track_loss.items()})
+        
+        # overlapping loss for last layer
+        new_track_loss = self.loss_overlap(outputs_i, active_idxes)
+        self.losses_dict.update(
+                {'frame_{}_{}'.format(self._current_frame_idx, key): value for key, value in new_track_loss.items()})
+
 
         if 'aux_outputs' in outputs:
             for i, aux_outputs in enumerate(outputs['aux_outputs']):
@@ -346,6 +381,22 @@ class RuntimeTrackerBase(object):
 
         track_instances.disappear_time[track_instances.scores >= self.score_thresh] = 0
         new_obj = (track_instances.obj_idxes == -1) & (track_instances.scores >= self.score_thresh)
+
+        # suppress overlapping predictions
+        t_new = track_instances[new_obj]
+        coord = t_new.ref_pts
+        scores = t_new.scores
+        C_scores = scores.view(1,-1) - scores.view(-1,1)
+        C_bbox = 1-box_ops.generalized_box_iou(
+                box_ops.box_cxcywh_to_xyxy(coord),
+                box_ops.box_cxcywh_to_xyxy(coord)
+        )
+        reiterated = (C_bbox<0.1) & (C_scores<0)  # true if (overlapping with another new detection) & (that detection has a better score)
+        reiterated = reiterated.sum(dim=0) > 0 
+        t_new.obj_idxes[reiterated] = -2
+        new_obj = new_obj & (track_instances.obj_idxes!=-2)
+        t_new.obj_idxes[reiterated] = -1
+
         disappeared_obj = (track_instances.obj_idxes >= 0) & (track_instances.scores < self.filter_score_thresh)
         num_new_objs = new_obj.sum().item()
 
