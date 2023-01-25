@@ -90,7 +90,7 @@ class FSCDataset(Dataset):
 
         return [img], [target], [exe]
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx, failed=False):
         idx = idx%len(self.detections)
         images, targets, exemplar = self._pre_single_frame(idx)
         if self.transform is not None:
@@ -99,6 +99,10 @@ class FSCDataset(Dataset):
         for img_i, targets_i in zip(images, targets):
             gt_instances_i = self._targets_to_instances(targets_i, img_i.shape[1:3])
             gt_instances.append(gt_instances_i)
+
+        if targets[0]['boxes'].__len__()==0:
+            if failed: idx = idx+53
+            return self.__getitem__(idx, True)
 
         exemplar = self.get_exemplar(images[0], targets[0])
 

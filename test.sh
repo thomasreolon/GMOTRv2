@@ -12,6 +12,6 @@ do
     if [[ $FILE == *.pth ]]
     then
         echo $FILE
-        python3 test.py ${args} --resume $FILE --prob_detect 0.38 --debug
+        python3 test.py ${args} --resume $FILE --prob_detect 0.5 --debug
     fi
 done

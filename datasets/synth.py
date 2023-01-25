@@ -116,7 +116,7 @@ class SynthData(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         bg_idx = (idx*2999) % len(self.bgs)
-        s_idx = idx % len(self.samples)
+        s_idx = (idx+50) % len(self.samples)
         d_idx = s_idx-1  - (idx*421) % (len(self.samples)-1)
         
         bg = self.bgs[bg_idx]
@@ -134,14 +134,21 @@ class SynthData(torch.utils.data.Dataset):
         scale = [608, 640, 672, 704, 736, 768, 800,][int(torch.rand(1)*7)]
         base_bg = cv2.resize(base_bg, (scale, int(scale*base_bg.shape[0]/base_bg.shape[1])))
 
-        r = (torch.rand(1)**2).item() + .8
-        for i in range(len(crops)):
-            crops[i] = cv2.resize(crops[i], (int(crops[i].shape[1]*r), int(crops[i].shape[0]*r)))
+            # crops[i] = 
+        # for i, patch in enumerate(crops):
 
+        r = (torch.rand(1)**2).item() + .8
+        use_perspective = torch.rand(1)<.3
+        pooling_point = torch.rand(3)
         data = []
         base_v = get_movement(base_bg, 0.02)
-        for i, patch in enumerate(crops):
-            coord = [int(torch.rand(1)*base_bg.shape[1]), int(torch.rand(1)*base_bg.shape[0])]
+        for i in range(len(crops)):
+            c_h = torch.rand(1).item()
+            ri = r * ((0.5 + c_h/2) if use_perspective else 1)
+            x = (1-pooling_point[2]/2)* torch.rand(1) + pooling_point[0]*pooling_point[2]/2
+            y = (1-pooling_point[2]/2)* c_h + pooling_point[1]*pooling_point[2]/2
+            coord = [int(x*base_bg.shape[1]), int(y*base_bg.shape[0])]
+            patch = cv2.resize(crops[i], (int(crops[i].shape[1]*ri), int(crops[i].shape[0]*ri)))
             velocity = get_movement(base_bg, 0.05)
             if i<min(2, len(data)-2): coord=None
             data.append([patch, coord, [base_v[0]+velocity[0], base_v[1]+velocity[1]], idx*1000 + i])

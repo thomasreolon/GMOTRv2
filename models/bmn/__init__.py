@@ -72,7 +72,7 @@ class BMNProposer(torch.nn.Module):
         return ref_pts, loss   # Nx4
 
     def _loss(self, density_map, corr_map, boxes):
-        if not torch.is_grad_enabled(): return torch.zeros(1), None
+        if not torch.is_grad_enabled(): return torch.zeros(1, device=density_map.device).mean(), None
         # GT heatmap
         with torch.no_grad():
             count_map = torch.zeros_like(density_map)

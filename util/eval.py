@@ -6,15 +6,20 @@ import numpy as np
 def compute_mota(output_path, fname, gt_folder, preds_folder):
     gt_files = os.listdir(gt_folder)
     summaries, names = [], []
+    skipped = 0
     for file in os.listdir(preds_folder):
         if file not in gt_files: continue
         print('evaluating...', file)
 
-        summary = motMetricsEnhancedCalculator(gt_folder+file, preds_folder+file)        
-        summaries.append(summary)
-        names.append(file.split('.')[0])
+        summary = motMetricsEnhancedCalculator(gt_folder+file, preds_folder+file)
+        if summary is not None:        
+            summaries.append(summary)
+            names.append(file.split('.')[0])
+        else: skipped +=1
+        
+    r = len(summaries)/(1e-10+skipped+len(summaries))
+    stats = pd.concat(summaries) * r
 
-    stats = pd.concat(summaries)
     stats['video'] = names
     avg = stats.mean(axis=0)
 
@@ -48,6 +53,7 @@ def motMetricsEnhancedCalculator(gtSource, tSource):
 
     # load tracking output
     t = np.loadtxt(tSource, delimiter=',')
+    if len(t)==0: return None
 
     # Create an accumulator that will be updated during each frame
     acc = mm.MOTAccumulator(auto_id=True)

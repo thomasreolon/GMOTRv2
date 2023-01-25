@@ -157,7 +157,7 @@ class ListImgDataset(Dataset):
         return ori_img, img, self.e, bb
 
     def __len__(self):
-        return len(self.img_list)
+        return 10 #len(self.img_list)
 
     def __getitem__(self, index):
         ori_img, img, exemplar, bb = self.load_img_from_file(self.img_list[index])

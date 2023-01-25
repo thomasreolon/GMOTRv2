@@ -41,6 +41,7 @@ def make_imgdataset_transforms(args, image_set):
             MotRandomHorizontalFlip(),
             MotRandomResize(scales, max_size=1555),
             MotRandomShiftExtender(args.sample_interval,args.sampler_lengths[0]),
+            MotMovingRandomCrop(),
             MOTHSV(),
             normalize,  # also scales from HW to [01]
             MOTCleanGT(),
@@ -83,6 +84,27 @@ def make_viddataset_transforms(args, image_set):
             normalize,
         ])
 
+class MotMovingRandomCrop():
+    def __call__(self, imgs: list, targets: list):
+        ret_imgs = []
+        ret_targets = []
+        image_width, image_height = imgs[0].size
+        c1,c2,r = [(3,4,1),(1,2,0.5),(5,6,1),(1,2,0.2)] [int(np.random.rand(1)*4)]
+
+        w,h = image_width*c1//c2, image_height*c1//c2
+        j = int(np.random.rand(1)*image_width/c2)
+        i = int(np.random.rand(1)*image_height/c2)
+        step_j = (-j if image_width-j-w < j else image_width-j-w)/(len(imgs)-0.999)*r
+        step_i = (-i if image_height-i-h < i else image_height-i-h)/(len(imgs)-0.999)*r
+
+        for img_i, targets_i in zip(imgs, targets):
+            region = i,j,h,w
+            img_i, targets_i = crop(img_i, targets_i, region)
+            ret_imgs.append(img_i)
+            ret_targets.append(targets_i)
+            i += int(np.random.rand(1)*step_i)
+            j += int(np.random.rand(1)*step_j)
+        return ret_imgs, ret_targets
 
 
 def crop_mot(image, target, region):
@@ -229,7 +251,7 @@ def crop(image, target, region):
     # should we do something wrt the original size?
     target["size"] = torch.tensor([h, w])
 
-    fields = ["labels", "area", "iscrowd"]
+    fields = ["labels", "area", "iscrowd", "scores"]
     if 'obj_ids' in target:
         fields.append('obj_ids')
 
@@ -257,6 +279,12 @@ def crop(image, target, region):
         if "boxes" in target:
             cropped_boxes = target['boxes'].reshape(-1, 2, 2)
             keep = torch.all(cropped_boxes[:, 1, :] > cropped_boxes[:, 0, :], dim=1)
+            areas = cropped_boxes[:, 1, :] - cropped_boxes[:, 0, :]
+            areas = (areas[:, 0] * areas[:, 1])
+            small = areas < areas.mean()*0.5
+            touch_edge_l = (cropped_boxes[:, 0, 0]==0) | (cropped_boxes[:, 0, 1]==0)
+            touch_edge_r = (cropped_boxes[:, 1, 0]==max_size[0]) | (cropped_boxes[:, 1, 1]==max_size[1])
+            keep = keep & ~(small & (touch_edge_l | touch_edge_r))
         else:
             keep = target['masks'].flatten(1).any(1)
 
@@ -388,7 +416,7 @@ class MOTCleanGT:
             bbs = target['boxes']
             tmp = bbs[:, :2].clamp(0,max_)
             diff = (bbs[:, :2] - tmp).abs()
-            coeff = bbs[:, 2:] / (diff+bbs[:, 2:])
+            coeff = bbs[:, 2:] / (diff*2+bbs[:, 2:])
 
             bbs[:, :2] = tmp
             bbs[:, 2:] *= coeff
