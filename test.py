@@ -17,7 +17,7 @@ from tqdm import tqdm
 from models import build_model
 from main import get_args_parser
 
-import shutil
+from tools.visualize import process2 
 from models.structures import Instances
 from torch.utils.data import Dataset, DataLoader
 from configs.defaults import get_args_parser
@@ -37,22 +37,19 @@ def main():
     model = load_for_eval(args).to(args.device).eval()
     model.track_embed.score_thr = args.prob_detect*.8
 
-    # Load dataset
-    print('loading dataset...')
+    print('------ loading dataset  ------ ')
     dataset = load_svdataset('e2e_gmot', 'val', args)
 
-    # rank = int(os.environ.get('RLAUNCH_REPLICA', '0'))
-    # ws = int(os.environ.get('RLAUNCH_REPLICA_TOTAL', '1'))
-    # dataset = dataset[rank::ws]
-
-    # Track
     det = Detector(args, model, dataset)
-    print('tracking..')
+    print('------  tracking  ------ ')
     for vid in range(len(dataset)):
         det.detect(vid)
 
-    print('getting scores..')
+    print('------  getting scores ------ ')
     compute_mota(args.output_dir, args.resume.split('/')[-1][:-4], args.gmot_path+'/track_label/', str(det.predict_path)+'/')
+
+    print('------  making video  ------ ')
+    process2(str(det.predict_path)+'/', args.gmot_path+'/GenericMOT_JPEG_Sequence/', args.output_dir+f'/video_{args.resume.split("/")[-1][:-4]}.mp4')
 
 def load_svdataset(datasetname, split, args):
     assert datasetname in {'e2e_gmot', 'e2e_fscd'}, f'invalid dataset "{datasetname}"'
@@ -204,6 +201,19 @@ class Detector(object):
             f.writelines(lines)
         print("{}: totally {} dts [{} per frame]".format(v_name, len(lines), len(lines)/len(loader)))
 
+def video():
+    jobs = os.listdir("exps/motrv2_noqd/run1/tracker/")
+    rank = int(os.environ.get('RLAUNCH_REPLICA', '0'))
+    ws = int(os.environ.get('RLAUNCH_REPLICA_TOTAL', '1'))
+    jobs = sorted(jobs)[rank::ws]
+    for seq in jobs:
+        print(seq)
+
+        trk_path = "exps/motrv2_noqd/run1/tracker/" + seq
+        # trk_path = "/data/Dataset/mot/DanceTrack/val/dancetrack0010/gt/gt.txt"
+
+        img_list = glob(f"/data/Dataset/mot/DanceTrack/val/{seq[:-4]}/img1/*.jpg")
+        process(trk_path, img_list, f'motr_trainval_demo/{seq[:-4]}.mp4')
 
 
 def load_for_eval(args):

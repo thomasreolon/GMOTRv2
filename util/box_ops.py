@@ -22,6 +22,17 @@ def box_cxcywh_to_xyxy(x):
          (x_c + 0.5 * w), (y_c + 0.5 * h)]
     return torch.stack(b, dim=-1)
 
+def safe_box_cxcywh_to_xyxy(x, m_ = 1e-2):
+    m_ = torch.tensor([m_],device=x.device,dtype=x.dtype)
+    x_c, y_c, w, h = x.unbind(-1)
+    b = [
+        torch.min(1-m_,  torch.max(m_*0, (x_c - 0.5 * w))), 
+        torch.min(1-m_,  torch.max(m_*0, (y_c - 0.5 * h))),
+        torch.min(m_/m_, torch.max(m_,   (x_c + 0.5 * w))), 
+        torch.min(m_/m_, torch.max(m_,   (y_c + 0.5 * h))),
+    ]
+    return torch.stack(b, dim=-1)
+
 
 def box_xyxy_to_cxcywh(x):
     x0, y0, x1, y1 = x.unbind(-1)

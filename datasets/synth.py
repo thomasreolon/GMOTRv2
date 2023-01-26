@@ -27,7 +27,7 @@ def augment(patch, img_h=999, img_w=999):
     r = torch.rand(4)
     if r[0]>.0: # rotate
         patch = rotate_img(patch, float(r[1]*4-2))
-    if r[2]>.0: #resize
+    if r[2]>.0: # resize
         w,h = int(patch.shape[1]*(.86+.28*r[3])), int(patch.shape[0]*(.9+.2*r[3]))
         w,h = max(w,16), max(h,16)
         w,h = min(img_w-10,w), min(img_h-10,h)
@@ -155,8 +155,6 @@ class SynthData(torch.utils.data.Dataset):
 
         # exemplar
         exemplar = None
-        # [F.normalize(F.to_tensor(patch[:,:,::-1]/255), (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)).float(), torch.tensor([coord[0]+patch.shape[1]/2, coord[1]+patch.shape[0]/2, patch.shape[1], patch.shape[0]])]
-        # exemplar[1] = exemplar[1] / torch.tensor([base_bg.shape[1], base_bg.shape[0], base_bg.shape[1], base_bg.shape[0]])
 
         # simulate movement
         images = []

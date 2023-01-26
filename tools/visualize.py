@@ -10,13 +10,11 @@ import os
 import cv2
 import subprocess
 from tqdm import tqdm
-
+import numpy as np
 
 def get_color(i):
     return [(i * 23 * j + 43) % 255 for j in range(3)]
 
-with open("/data/Dataset/mot/det_db_oc_sort.json") as f:
-    det_db = json.load(f)
 
 def process(trk_path, img_list, output="output.mp4"):
     h, w, _ = cv2.imread(img_list[0]).shape
@@ -54,18 +52,53 @@ def process(trk_path, img_list, output="output.mp4"):
             im = cv2.putText(im, f"{j}", (x1 + 10, y1 + 30), cv2.FONT_HERSHEY_SIMPLEX, 1, get_color(j), 2)
         writing_process.stdin.write(im.tobytes())
 
+def process2(trk_path, img_path, output="output.mp4"):
+    H,W = 720,1080
+    command = [
+        "/usr/bin/ffmpeg",
+        '-y',  # overwrite output file if it exists
+        '-f', 'rawvideo',
+        '-vcodec','rawvideo',
+        '-s', f'{W}x{H}',  # size of one frame
+        '-pix_fmt', 'bgr24',
+        '-r', '20',  # frames per second
+        '-i', '-',  # The imput comes from a pipe
+        '-an',  # Tells FFMPEG not to expect any audio
+        '-loglevel', 'error',
+        '-crf', '26',
+        '-pix_fmt', 'yuv420p'
+    ]
+    writing_process = subprocess.Popen(command + [output], stdin=subprocess.PIPE)
+    for file in [x for x in os.listdir(trk_path) if '.txt' in x]:
+        annot_path = f'{trk_path}/{file}'
+        img_list = os.listdir(f'{img_path}/{file[:-4]}/img1/')
 
-if __name__ == '__main__':
-    jobs = os.listdir("exps/motrv2_noqd/run1/tracker/")
-    rank = int(os.environ.get('RLAUNCH_REPLICA', '0'))
-    ws = int(os.environ.get('RLAUNCH_REPLICA_TOTAL', '1'))
-    jobs = sorted(jobs)[rank::ws]
-    for seq in jobs:
-        print(seq)
+        tracklets = defaultdict(list)
+        for line in open(annot_path):
+            t, id, *xywhs = line.split(',')[:7]
+            t, id = map(int, (t, id))
+            x, y, w, h, s = map(float, xywhs)
+            tracklets[t].append((id, *map(int, (x, y, x+w, y+h))))
 
-        trk_path = "exps/motrv2_noqd/run1/tracker/" + seq
-        # trk_path = "/data/Dataset/mot/DanceTrack/val/dancetrack0010/gt/gt.txt"
+        for i, path in enumerate(tqdm(sorted(img_list))):
+            im = cv2.imread(f'{img_path}/{file[:-4]}/img1/{path}')
+            for j, x1, y1, x2, y2 in tracklets[i]:
+                im = cv2.rectangle(im, (x1, y1), (x2, y2), get_color(j), 4)
+                im = cv2.putText(im, f"{j}", (x1 + 10, y1 + 30), cv2.FONT_HERSHEY_SIMPLEX, 1, get_color(j), 2)
+            
 
-        img_list = glob(f"/data/Dataset/mot/DanceTrack/val/{seq[:-4]}/img1/*.jpg")
-        process(trk_path, img_list, f'motr_trainval_demo/{seq[:-4]}.mp4')
-        break
+            r_diff = W/H - im.shape[1]/im.shape[0]
+            if r_diff < 0:
+                # add pad top
+                pad = int(im.shape[1] * -r_diff)
+                pad = 100*np.ones_like(im)[:pad]
+                im = np.concatenate((im, pad), axis=0)
+            elif r_diff > 0:
+                # add pad top
+                pad = int(im.shape[1] * r_diff)
+                pad = 100*np.ones_like(im)[:, :pad]
+                im = np.concatenate((im, pad), axis=1)
+
+            im = cv2.resize(im, (W,H))
+            writing_process.stdin.write(im.tobytes())
+

@@ -174,8 +174,8 @@ class ClipMatcher(SetCriterion):
             good_boxes = outputs['pred_boxes'][0,active_idxs].view(-1,4)
             bad_boxes = outputs['pred_boxes'][0, ~active_idxs].view(-1,4)
             overlapping = box_ops.generalized_box_iou(
-                box_ops.box_cxcywh_to_xyxy(good_boxes),
-                box_ops.box_cxcywh_to_xyxy(bad_boxes))
+                box_ops.safe_box_cxcywh_to_xyxy(good_boxes),
+                box_ops.safe_box_cxcywh_to_xyxy(bad_boxes))
             overlapping = (overlapping**4 -.4) * 1.66 * (overlapping>0.8).float()
 
         good_logits = outputs['pred_logits'][0, active_idxs].view(-1)
@@ -829,7 +829,7 @@ class MOTR(nn.Module):
                         tmp = img[ y1:y2, x1:x2].copy()
                         img[y1-3:y2+3, x1-3:x2+3] = color
                         img[y1:y2, x1:x2] = tmp
-                cv2.imwrite(f'{self.args.output_dir}/debug/MATCH_{len(dt_instances)%5}_{self.show_frame}.jpg', np.uint8((img/4+.4)*255))
+                    cv2.imwrite(f'{self.args.output_dir}/debug/MATCH_{len(dt_instances)%5}_{self.show_frame}.jpg', np.uint8((img/4+.4)*255))
 
         if not self.training:
             outputs['track_instances'] = track_instances

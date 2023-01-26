@@ -89,6 +89,3 @@ def motMetricsEnhancedCalculator(gtSource, tSource):
 
     return summary
 
-
-if __name__=='__main__':
-    main()

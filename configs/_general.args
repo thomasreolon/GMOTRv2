@@ -1,10 +1,10 @@
---dataset_file joint_fscd
+--dataset_file joint_fscd_synth
 
---epochs 99
+--epochs 8
 
---lr 2e-5
---lr_drop 25
---lr_backbone 1e-5
+--lr 2e-4
+--lr_drop 3
+--lr_backbone 1e-6
 --batch_size 1
 --sample_mode random_interval
 --sample_interval 6

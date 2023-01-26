@@ -1,7 +1,6 @@
 import torch
 import torch.nn.functional as F
 import cv2, numpy as np
-import math
 
 from .models import build_model
 from util.misc import is_main_process

@@ -18,6 +18,6 @@ for i in range(100):
         img = (img-img.min()) / (img.max()-img.min())
         img = img.permute(1,2,0).numpy()[:,:,::-1]
         cv2.imshow('f', np.uint8(img*255))
-        cv2.waitKey(50)
+        cv2.waitKey()
 
 print('end')

@@ -48,7 +48,7 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
         losses = losses + c_loss
 
         # reduce losses over all GPUs for logging purposes
-        if d_i%print_freq==0:
+        if d_i%1==0:
             loss_dict_reduced = utils.reduce_dict(loss_dict)
             loss_dict_reduced_scaled = {k: v * weight_dict[k]
                                         for k, v in loss_dict_reduced.items() if k in weight_dict}

@@ -1,0 +1,6 @@
+--meta_arch deformable_detr2
+--concatenate_exemplar
+--num_queries 300
+
+--use_expanded_query
+--use_bmn
