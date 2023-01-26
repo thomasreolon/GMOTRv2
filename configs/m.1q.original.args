@@ -1,0 +1,3 @@
+--meta_arch deformable_detr
+--num_queries 300
+--concatenate_exemplar
