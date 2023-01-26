@@ -169,26 +169,30 @@ class ClipMatcher(SetCriterion):
         """
         Penalizes predicting objects multiple times
         """
+        if active_idxs.sum()==0 or (~active_idxs).sum()==0:
+            overlapping_loss = torch.zeros(1, device=outputs['pred_boxes'].device).mean()
+        else:
+            # get how much box are close
+            with torch.no_grad():
+                good_boxes = outputs['pred_boxes'][0,active_idxs].view(-1,4)
+                bad_boxes = outputs['pred_boxes'][0, ~active_idxs].view(-1,4)
+                overlapping = box_ops.generalized_box_iou(
+                    box_ops.safe_box_cxcywh_to_xyxy(good_boxes),
+                    box_ops.safe_box_cxcywh_to_xyxy(bad_boxes))
+                overlapping = (overlapping**4 -.4) * 1.66 * (overlapping>0.8).float()
 
-        with torch.no_grad():
-            good_boxes = outputs['pred_boxes'][0,active_idxs].view(-1,4)
-            bad_boxes = outputs['pred_boxes'][0, ~active_idxs].view(-1,4)
-            overlapping = box_ops.generalized_box_iou(
-                box_ops.safe_box_cxcywh_to_xyxy(good_boxes),
-                box_ops.safe_box_cxcywh_to_xyxy(bad_boxes))
-            overlapping = (overlapping**4 -.4) * 1.66 * (overlapping>0.8).float()
+            # maximize:  good/(good+bad)
+            good_logits = outputs['pred_logits'][0, active_idxs].view(-1)
+            bad_logits = outputs['pred_logits'][0, ~active_idxs].view(1,-1).expand(len(good_logits),-1)
+            bad_logits = bad_logits * overlapping
+            good_logits = good_logits.exp()
+            bad_logits = bad_logits.exp()
 
-        good_logits = outputs['pred_logits'][0, active_idxs].view(-1)
-        bad_logits = outputs['pred_logits'][0, ~active_idxs].view(1,-1).expand(len(good_logits),-1)
-        bad_logits = bad_logits * overlapping
-        good_logits = good_logits.exp()
-        bad_logits = bad_logits.exp()
-
-        overlapping_loss = - (good_logits / (good_logits+bad_logits.sum(dim=-1))).log()
-
+            soft_loss = 1e-9 + good_logits / (good_logits+bad_logits.sum(dim=-1))
+            overlapping_loss = - soft_loss.log().mean()
 
         losses = {
-            'loss_overlap': overlapping_loss.mean() / 4
+            'loss_overlap': overlapping_loss / 4
         }
         return losses
 

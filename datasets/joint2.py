@@ -19,10 +19,16 @@ class JOINTFSCD(torch.utils.data.Dataset):
             for dataset in self.datasets:
                 d_len = len(dataset)
                 if idx < d_len:
-                    return dataset[idx]
+                    self._return(dataset[idx])
                 idx -= d_len
         except: pass
         return dataset[0] #should never happen
+
+    def _return(self, tmp):
+        if any([len(t.boxes)==0 for t in tmp['gt_instances']]):
+            return self[int(torch.rand(1)*sum(self.lens))]
+        return tmp
+
 
     def set_epoch(*a,**b):pass
 

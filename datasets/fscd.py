@@ -100,7 +100,7 @@ class FSCDataset(Dataset):
             gt_instances_i = self._targets_to_instances(targets_i, img_i.shape[1:3])
             gt_instances.append(gt_instances_i)
 
-        if targets[0]['boxes'].__len__()==0:
+        if any([ t['boxes'].shape[0]==0 for t in targets ]):
             if failed: idx = idx+53
             return self.__getitem__(idx, True)
 
