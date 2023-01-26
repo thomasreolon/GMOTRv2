@@ -75,7 +75,7 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
         metric_logger.update(counting_loss=c_loss.item() if isinstance(c_loss, torch.Tensor) else -1)
 
         # gather the stats from all processes
-        if debug_out_path and d_i in {0,1,2,3,4,50%n_dl, 150%n_dl, 100%n_dl, n_dl//2, n_dl*4//5}:
+        if debug_out_path and d_i in {0,1,2,3,4,5,6,7,8,9,10,50%n_dl, 150%n_dl, 100%n_dl, n_dl//2, n_dl*4//5}:
             # utils.get_info()
             visualize_gt(data_dict, debug_out_path, d_i)
             train_visualize_pred(data_dict, outputs, debug_out_path, model.args.prob_detect, d_i)

@@ -78,23 +78,22 @@ def load_gmot(split, args):
                 if len(lines)==12:break
         
         # select good BB
-        lines = np.array(lines)
-        i = np.arange(len(lines))
-        r = lines[:,4]/(lines[:,5]+0.001)
-        a = lines[:,4]*lines[:,5]
-        scores= [(ii,rr,aa) for ii,rr,aa in zip(i,r,a)]
-        scores.sort(key=lambda x:x[1])
-        slice = len(scores)//3
-        scores = scores[slice:-slice]
-        scores.sort(key=lambda x:x[2])
-        idx = scores[-1][0]
+        idx = exemplar_n[video]
+        line = lines[idx]
 
         # get coords
-        line = lines[idx]
         bb = line[2], line[3], line[2]+line[4], line[3]+line[5],
 
         # get images
         imgs = sorted(os.listdir(f'{base_path}/{video}/img1'))
+
+        ## visualize Exemplar
+        # x=cv2.imread(f'{base_path}/{video}/img1/{imgs[0]}')
+        # cv2.imshow('video', x)
+        # # for i, line in enumerate(lines):
+        # #     bb = line[2], line[3], line[2]+line[4], line[3]+line[5]
+        # cv2.imshow('e', x[bb[1]:bb[3], bb[0]:bb[2]])
+        # cv2.waitKey()
 
         list_dataset.append((f'{base_path}/{video}/img1/', imgs, bb))  # none should be the exemplar_bb xyxy
 
@@ -154,7 +153,8 @@ class ListImgDataset(Dataset):
         return ori_img, img, self.e, bb
 
     def __len__(self):
-        return 10 #len(self.img_list)
+        # return 10 # fast eval
+        return len(self.img_list)
 
     def __getitem__(self, index):
         ori_img, img, exemplar, bb = self.load_img_from_file(self.img_list[index])
@@ -201,20 +201,6 @@ class Detector(object):
             f.writelines(lines)
         print("{}: totally {} dts [{} per frame]".format(v_name, len(lines), len(lines)/len(loader)))
 
-def video():
-    jobs = os.listdir("exps/motrv2_noqd/run1/tracker/")
-    rank = int(os.environ.get('RLAUNCH_REPLICA', '0'))
-    ws = int(os.environ.get('RLAUNCH_REPLICA_TOTAL', '1'))
-    jobs = sorted(jobs)[rank::ws]
-    for seq in jobs:
-        print(seq)
-
-        trk_path = "exps/motrv2_noqd/run1/tracker/" + seq
-        # trk_path = "/data/Dataset/mot/DanceTrack/val/dancetrack0010/gt/gt.txt"
-
-        img_list = glob(f"/data/Dataset/mot/DanceTrack/val/{seq[:-4]}/img1/*.jpg")
-        process(trk_path, img_list, f'motr_trainval_demo/{seq[:-4]}.mp4')
-
 
 def load_for_eval(args):
     ARCHITECTURE = ['use_expanded_query', 'concatenate_exemplar', 'use_bmn', 'meta_arch', 'with_box_refine', 'two_stage', 'accurate_ratio', 'num_anchors', 'backbone', 'enable_fpn',  'position_embedding', 'num_feature_levels', 'enc_layers', 'dim_feedforward', 'num_queries', 'hidden_dim', 'dec_layers',  'nheads', 'enc_n_points', 'dec_n_points', 'decoder_cross_self', 'extra_track_attn', 'loss_normalizer']
@@ -235,6 +221,51 @@ def load_for_eval(args):
     with open(args.output_dir+'/modelstats.txt', 'a') as fout:
         fout.write(msg + '   nparams:' + str(sum(p.numel() for p in model.parameters()))+ '\n')
     return model
+
+
+exemplar_n={
+    'insect-1':2,
+    'airplane-3':3,
+    'boat-0':1, 
+    'person-3':11, 
+    'boat-2':5, 
+    'airplane-1':0, 
+    'ball-0':8, 
+    'insect-3':7, 
+    'boat-1':6, 
+    'balloon-2':0, 
+    'balloon-1':3, 
+    'person-0':7, 
+    'car-2':0, 
+    'car-1':4, 
+    'car-0':3, 
+    'stock-2':6, 
+    'airplane-2':0, 
+    'bird-3':4, 
+    'person-2':10, 
+    'person-1':0, 
+    'insect-0':1, 
+    'stock-3':11, 
+    'ball-2':8, 
+    'car-3':7, 
+    'boat-3':4, 
+    'fish-0':3, 
+    'airplane-0':10, 
+    'stock-1':7, 
+    'stock-0':3, 
+    'bird-0':2, 
+    'ball-1':0, 
+    'bird-2':3, 
+    'bird-1':8, 
+    'fish-1':2, 
+    'balloon-0':5, 
+    'insect-2':10, 
+    'balloon-3':8, 
+    'ball-3':5, 
+    'fish-3':0, 
+    'fish-2':6 
+}
+
 
 
 if __name__=='__main__':

@@ -1,6 +1,6 @@
---dataset_file joint_fscd_synth
+--dataset_file joint_fscd
 
---epochs 8
+--epochs 10
 
 --lr 2e-4
 --lr_drop 3

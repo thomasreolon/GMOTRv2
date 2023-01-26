@@ -65,7 +65,7 @@ class BMNProposer(torch.nn.Module):
             bb = torch.tensor([[exemplar.shape[3]/image.shape[3],  exemplar.shape[2]/image.shape[2]]], device=device).expand(xy.shape[0], -1)
             ref_pts = torch.cat((xy,bb),dim=1)
         
-            if self.args.debug and count_map is not None and gt_boxes is not None and torch.rand(1)>0.98:
+            if self.args.debug and count_map is not None and gt_boxes is not None and torch.rand(1)>0.7:
                 self._debug_visualization(image, xy, interest, res['corr_map'], count_map)
 
         return ref_pts, loss   # Nx4

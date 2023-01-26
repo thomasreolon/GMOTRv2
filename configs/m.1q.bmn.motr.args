@@ -1,0 +1,5 @@
+--meta_arch deformable_detr
+--num_queries 300
+
+--use_expanded_query
+--use_bmn
