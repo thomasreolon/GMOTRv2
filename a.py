@@ -5,8 +5,8 @@ import numpy as np
 
 args = get_args_parser().parse_args()
 args.dataset_file = 'joint_synth'
-args.fscd_path = '../datasets/FSCD147'
-args.synth_path = '../datasets/synth_data'
+args.fscd_path = '../dataset/FSCD147'
+args.synth_path = '../dataset/synth_data'
 args.sampler_lengths = [5]
 
 ds = build_dataset('train', args)

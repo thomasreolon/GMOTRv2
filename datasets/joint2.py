@@ -22,7 +22,7 @@ class JOINTFSCD(torch.utils.data.Dataset):
                     return self._check(dataset[idx])
                 idx -= d_len
         except Exception as e:
-            print(e, force=True)
+            print(e)
         return dataset[idx-1] #should never happen
 
     def _check(self, tmp):
