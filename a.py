@@ -5,10 +5,12 @@ import numpy as np
 import torch
 
 args = get_args_parser().parse_args()
+
 args.dataset_file = 'joint_coco_fscd_synth'
 args.fscd_path = '../datasets/FSCD147'
 args.synth_path = '../datasets/synth_data'
 args.coco_path = '../datasets/coco'
+
 args.sampler_lengths = [5]
 
 ds = build_dataset('train', args)

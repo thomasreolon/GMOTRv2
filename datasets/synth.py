@@ -73,14 +73,14 @@ class SynthData(torch.utils.data.Dataset):
         super().__init__()
         self.args = args
         dir_path = args.synth_path
-        self.transf = MotRandomResize([608, 640, 672, 704, 736, 768, 800, 832, 864, 896, 928, 960, 992], max_size=1536)
+        # self.transf = MotRandomResize([608, 640, 672, 704, 736, 768, 800, 832, 864, 896, 928, 960, 992], max_size=1536)
 
         samples = []
         images  = [x for x in os.listdir(dir_path) if x != 'bg']
         for folder in images:
             crops = []
             imgs = os.listdir(dir_path+'/'+folder)
-            patch_size = 64 if len(imgs)<10 else 12+ 48 / len(imgs)**.5
+            patch_size = 80 if len(imgs)<5 else 16+ 90 / len(imgs)**.5
             for img in imgs:
                 img = cv2.imread(dir_path+'/'+folder+'/'+img)
                 r = img.shape[0]/img.shape[1]
@@ -102,11 +102,9 @@ class SynthData(torch.utils.data.Dataset):
         images = [x for x in os.listdir(dir_path+'/bg/') if 'a' in x]
         for bg in images:
             img = cv2.imread(dir_path+'/bg/'+bg)
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            img = 0.9 + 0.1*img / 254.9
-            w,h = 700, int(700*img.shape[0]/img.shape[1])
+            w,h = 1080, int(1080*img.shape[0]/img.shape[1])
             img = cv2.resize(img, (w,h))
-            bgs.append(img[:,:,None])
+            bgs.append(img)
         self.bgs = bgs
 
     def __len__(self):
@@ -124,15 +122,15 @@ class SynthData(torch.utils.data.Dataset):
         # get a random bg with similar pattern colors to original
         a,b,c,d = (1+torch.rand(4)*min(bg.shape[:2])/5).int()
         bg = bg[a:-b, c:-d]
-        base_bg = cv2.resize(base_bg, (bg.shape[1], bg.shape[0])) * bg
+        color = 7+(torch.rand(1)*3).int().item()
+        base_bg = bg#*10//10 + cv2.resize(base_bg, (bg.shape[1], bg.shape[0]))* (10-color)//10
         _, distractions = self.samples[d_idx]
         for patch in distractions:
             r = 0.5 + 0.5*torch.rand(1)**2
             patch = cv2.resize(patch, (int(patch.shape[1]*r), int(patch.shape[0]*r)))
             coord = [int(torch.rand(1)*base_bg.shape[1]), int(torch.rand(1)*base_bg.shape[0])]
             add_patch(base_bg, patch, coord)
-        scale = [608, 640, 672, 704, 736, 768, 800,][int(torch.rand(1)*7)]
-        base_bg = cv2.resize(base_bg, (scale, int(scale*base_bg.shape[0]/base_bg.shape[1])))
+        scale = [704, 736, 768, 800,848,912,1080][int(torch.rand(1)*7)]
 
             # crops[i] = 
         # for i, patch in enumerate(crops):
@@ -161,6 +159,7 @@ class SynthData(torch.utils.data.Dataset):
         gt_instances = []
         for i in range(self.args.sampler_lengths[0]):
             img, gt_bb, gt_idx = simulate(base_bg.copy(), data)
+            img = cv2.resize(img, (scale, int(scale*img.shape[0]/img.shape[1])))
             images.append(F.normalize(F.to_tensor(img[:,:,::-1]/255), (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)).float())
             inst = Instances((1,1))
             inst.boxes = torch.tensor(gt_bb).view(-1,4) / torch.tensor([[base_bg.shape[1], base_bg.shape[0], base_bg.shape[1], base_bg.shape[0]]])
