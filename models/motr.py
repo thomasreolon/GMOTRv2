@@ -383,8 +383,9 @@ class RuntimeTrackerBase(object):
     def update(self, track_instances: Instances):
         device = track_instances.obj_idxes.device
 
-        track_instances.disappear_time[track_instances.scores >= self.score_thresh] = 0
-        new_obj = (track_instances.obj_idxes == -1) & (track_instances.scores >= self.score_thresh)
+        score_thresh = max(self.score_thresh, track_instances.scores.max()*0.5)
+        track_instances.disappear_time[track_instances.scores >= score_thresh] = 0
+        new_obj = (track_instances.obj_idxes == -1) & (track_instances.scores >= score_thresh)
 
         # suppress overlapping predictions
         t_new = track_instances[new_obj]
@@ -810,10 +811,6 @@ class MOTR(nn.Module):
                 self.show_frame -= 1
                 dt_instances = self.post_process(track_instances, data['imgs'][0].shape[-2:])
 
-                keep = dt_instances.scores > .02
-                keep &= dt_instances.obj_idxes >= 0
-                dt_instances = dt_instances[keep]
-
                 wh = dt_instances.boxes[:, 2:4] - dt_instances.boxes[:, 0:2]
                 areas = wh[:, 0] * wh[:, 1]
                 keep = areas > 100
@@ -824,16 +821,17 @@ class MOTR(nn.Module):
                     identities = dt_instances.obj_idxes.tolist()
 
                     img = data['imgs'][frame_index].clone().cpu().permute(1,2,0).numpy()[:,:,::-1]
+                    img = (img-img.min())/(img.max()-img.min()+1e-7)*255.9
                     for xyxy, track_id in zip(bbox_xyxy, identities):
                         if track_id < 0 or track_id is None:
                             continue
                         x1, y1, x2, y2 = [int(a) for a in xyxy]
-                        color = tuple([(((5+track_id*3)*4909 % p)%256) /110 for p in (3001, 1109, 2027)])
+                        color = tuple([(((5+track_id*3)*4909 % p)%256) for p in (3001, 1109, 2027)])
 
                         tmp = img[ y1:y2, x1:x2].copy()
                         img[y1-3:y2+3, x1-3:x2+3] = color
                         img[y1:y2, x1:x2] = tmp
-                    cv2.imwrite(f'{self.args.output_dir}/debug/MATCH_{len(dt_instances)%5}_{self.show_frame}.jpg', np.uint8((img/4+.4)*255))
+                    cv2.imwrite(f'{self.args.output_dir}/debug/MATCH_{len(dt_instances)%5}_{self.show_frame}.jpg', np.uint8(img))
 
         if not self.training:
             outputs['track_instances'] = track_instances

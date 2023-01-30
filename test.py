@@ -76,7 +76,7 @@ def load_gmot(split, args):
                 if line[0] == '0': 
                     lines.append([int(l) for l in line.split(',')])
                 if len(lines)==12:break
-        
+
         # select good BB
         idx = exemplar_n[video]
         line = lines[idx]

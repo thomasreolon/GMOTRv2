@@ -4,3 +4,5 @@
 
 --use_expanded_query
 --use_bmn
+
+--pretrained /home/intern/Desktop/GMOTRv2/outputs/checkpoint_deformable_detr_catexe_bmn_1q_old.pth

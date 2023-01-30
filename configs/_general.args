@@ -1,4 +1,4 @@
---dataset_file joint_fscd
+--dataset_file joint_coco_fscd_synth
 
 --epochs 10
 

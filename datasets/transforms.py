@@ -29,7 +29,7 @@ from torchvision.ops.misc import interpolate
 from util.box_ops import box_xyxy_to_cxcywh
 
 
-def make_imgdataset_transforms(args, image_set):
+def make_imgdataset_transforms(args, image_set, use_moving_crop=True):
     normalize = MotCompose([
         MotToTensor(),
         MotNormalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
@@ -37,15 +37,26 @@ def make_imgdataset_transforms(args, image_set):
     scales = [608, 640, 672, 704, 736, 768, 800, 832, 864]
 
     if image_set == 'train':
-        return MotCompose([
-            MotRandomHorizontalFlip(),
-            MotRandomResize(scales, max_size=1555),
-            MotRandomShiftExtender(args.sample_interval,args.sampler_lengths[0]),
-            MotMovingRandomCrop(),
-            MOTHSV(),
-            normalize,  # also scales from HW to [01]
-            MOTCleanGT(),
-        ])
+        if use_moving_crop:
+            return MotCompose([
+                MotRandomHorizontalFlip(),
+                MotRandomResize(scales, max_size=1555),
+                MotRandomShiftExtender(args.sample_interval,args.sampler_lengths[0]),
+                MotMovingRandomCrop(),
+                MOTHSV(),
+                normalize,  # also scales from HW to [01]
+                MOTCleanGT(),
+            ])
+        else:
+            return MotCompose([
+                MotRandomHorizontalFlip(),
+                MotRandomResize(scales, max_size=1555),
+                MotRandomShiftExtender(args.sample_interval,args.sampler_lengths[0]),
+                MOTHSV(),
+                normalize,  # also scales from HW to [01]
+                MOTCleanGT(),
+            ])
+
     else:
         return MotCompose([
             MotRandomShiftExtender(args.sample_interval,args.sampler_lengths[0]),
@@ -423,7 +434,7 @@ class MOTCleanGT:
             
             keep = ((bbs>=1).sum(-1) + (bbs<0).sum(-1)) == 0
 
-            always_keep = {'size', 'ori_img'}
+            always_keep = {'size', 'ori_img', 'image_id', 'orig_size', 'area'}
             for field in target.keys():
                 if field not in always_keep:
                     target[field] = target[field][keep]

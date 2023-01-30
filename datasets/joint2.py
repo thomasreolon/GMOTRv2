@@ -1,7 +1,8 @@
 import torch
-from .fscd import build as build_fscd
 from .synth import SynthData
+from .fscd import build as build_fscd
 from .gmot import build as build_gmot
+from .coco import build as build_coco
 
 class JOINTFSCD(torch.utils.data.Dataset):
     def __init__(self, args, datasets) -> None:
@@ -22,7 +23,8 @@ class JOINTFSCD(torch.utils.data.Dataset):
                     return self._check(dataset[idx])
                 idx -= d_len
         except Exception as e:
-            print(e, force=True)
+            print(e)
+            raise e
         return dataset[idx-1] #should never happen
 
     def _check(self, tmp):
@@ -42,5 +44,7 @@ def build(split, args):
             datasets.append(build_fscd(split, args))
         elif 'synth' in d_name:
             datasets.append(SynthData(args))
+        elif 'coco' in d_name:
+            datasets.append(build_coco(split, args))
 
     return JOINTFSCD(args, datasets)

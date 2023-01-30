@@ -10,6 +10,8 @@ def get_args_parser():
     parser.add_argument('--fscd_path', default='/data/Dataset/mot', type=str)
     parser.add_argument('--synth_path', default='/data/Dataset/mot', type=str)
     parser.add_argument('--dance_path', default='/data/Dataset/mot', type=str)
+    parser.add_argument('--coco_path', default='/data/workspace/detectron2/datasets/coco/', type=str)
+    
     parser.add_argument('--prob_detect', default=0.2, type=float)
     parser.add_argument('--extract_exe_from_img', action='store_true')
     parser.add_argument('--use_exe_query', action='store_true')
@@ -132,7 +134,6 @@ def get_args_parser():
     parser.add_argument('--dataset_file', default='coco')
     parser.add_argument('--gt_file_train', type=str)
     parser.add_argument('--gt_file_val', type=str)
-    parser.add_argument('--coco_path', default='/data/workspace/detectron2/datasets/coco/', type=str)
     parser.add_argument('--coco_panoptic_path', type=str)
     parser.add_argument('--remove_difficult', action='store_true')
 
