@@ -390,7 +390,7 @@ class RuntimeTrackerBase(object):
         # suppress overlapping predictions
         t_new = track_instances #[new_obj]
         coord = t_new.ref_pts
-        scores = t_new.scores * (0.1 + (~new_obj).float())
+        scores = t_new.scores * (0.1 + (track_instances.obj_idxes >= 0).float())
         C_scores = scores.view(1,-1) - scores.view(-1,1)
         C_bbox = 1-box_ops.generalized_box_iou(
                 box_ops.box_cxcywh_to_xyxy(coord),
@@ -757,6 +757,8 @@ class MOTR(nn.Module):
             if track_instances is None:
                 track_instances = self._generate_empty_tracks()
             else:
+                to_drop= min(2, int(torch.rand(1).item()*len(track_instances)))
+                track_instances.obj_idxes[:to_drop]=-1  # hack to recover from lost objects
                 track_instances = Instances.cat([
                     self._generate_empty_tracks(),
                     track_instances])

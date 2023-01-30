@@ -32,7 +32,9 @@ class JOINTFSCD(torch.utils.data.Dataset):
         return tmp
 
 
-    def set_epoch(*a,**b):pass
+    def set_epoch(self, epoch,**b):
+        for d in self.datasets:
+            d.set_epoch(epoch)
 
 def build(split, args):
     datasets = []

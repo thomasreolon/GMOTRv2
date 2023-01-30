@@ -147,8 +147,8 @@ def main(args):
     name += '_bmn' if args.use_bmn else ''
     name += '_1q' if args.use_expanded_query else ''
 
-    dataset_train.set_epoch(args.start_epoch)
     for epoch in range(args.start_epoch, args.epochs):
+        dataset_train.set_epoch(epoch)
         debug_out_path = f'{output_dir}/debug/{epoch}/' if args.debug else None
         if args.distributed:
             sampler_train.set_epoch(epoch)
