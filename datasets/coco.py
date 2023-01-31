@@ -110,7 +110,7 @@ class CocoDetection(TvCocoDetection):
 
 
     def __getitem__(self, idx, failed=False):
-        idx = self.act_ids[idx]
+        idx = self.act_ids[idx % len(self.act_ids)]
         img, target = super(CocoDetection, self).__getitem__(idx)
         image_id = self.ids[idx]
         target = {'image_id': image_id, 'annotations': target}

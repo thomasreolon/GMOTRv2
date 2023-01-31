@@ -4,6 +4,8 @@ import cv2
 import numpy as np
 import torch
 
+# Debugging script, shows train dataset
+
 args = get_args_parser().parse_args()
 
 args.dataset_file = 'joint_coco_fscd_synth'
@@ -13,19 +15,19 @@ args.coco_path = '../datasets/coco'
 
 args.sampler_lengths = [5]
 
-ds = build_dataset('train', args)
-print('ok', len(ds))
+train_dataset = build_dataset('train', args)
+print('ok', len(train_dataset))
 
 for i in range(100):
-    i = (i*55339) % len(ds)
-    d = ds[i]
-    for img, gt in zip(d['imgs'], d['gt_instances']):
-        img = (img-img.min()) / (img.max()-img.min())
-        img = img.permute(1,2,0).numpy()[:,:,::-1]
+    i = (i*55339) % len(train_dataset)
+    data = train_dataset[i]
+    for img, gt in zip(data['imgs'], data['gt_instances']):
+        img = (img-img.min()) / (img.max()-img.min())     # un-normalize
+        img = img.permute(1,2,0).numpy()[:,:,::-1]*255.9  # cv2 BGR image
         H,W,_ = img.shape
-        def clean(x,X): return int(max(0,min(x, X-1)))
 
-        for box, idx in zip(gt.boxes, gt.obj_ids):
+        def clean(x,X): return int(max(0,min(x, X-1)))
+        for box, idx in zip(gt.boxes, gt.obj_ids): # draw bounding boxes
             box = (box.view(2,2) * torch.tensor([W, H], device=box.device).view(1,2)).int()
             x1,x2 = box[0,0] - box[1,0].div(2,rounding_mode='trunc'), box[0,0] + box[1,0].div(2,rounding_mode='trunc')
             y1,y2 = box[0,1] - box[1,1].div(2,rounding_mode='trunc'), box[0,1] + box[1,1].div(2,rounding_mode='trunc')
@@ -35,7 +37,7 @@ for i in range(100):
             img[y1+1:y2-1, x1+1:x2-1] = tmp
             
 
-        cv2.imshow('f', np.uint8(img*255))
+        cv2.imshow('gt', np.uint8(img))
         cv2.waitKey()
 
 print('end')

@@ -1,3 +1,6 @@
 tqdm
 scipy
 opencv-python
+motmetrics
+pycocotools
+yacs
