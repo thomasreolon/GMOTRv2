@@ -9,8 +9,8 @@ import torch
 import torch.utils.data
 from pycocotools import mask as coco_mask
 
-# from util.misc import get_local_rank, get_local_size
-import datasets._transforms as T
+from util.misc import get_local_rank, get_local_size
+import datasets.transforms as T
 
 from torchvision.datasets.vision import VisionDataset
 from PIL import Image
@@ -42,6 +42,9 @@ class TvCocoDetection(VisionDataset):
         self.cache_mode = cache_mode
         self.local_rank = local_rank
         self.local_size = local_size
+        if cache_mode:
+            self.cache = {}
+            self.cache_images()
 
     def cache_images(self):
         self.cache = {}
@@ -85,10 +88,10 @@ class TvCocoDetection(VisionDataset):
 
 
 class CocoDetection(TvCocoDetection):
-    def __init__(self, img_folder, ann_file, args, transforms, return_masks, full_dataset=False, cache_mode=False, local_rank=0, local_size=1):
-        super(CocoDetection, self).__init__(img_folder, ann_file, cache_mode=cache_mode, local_rank=local_rank, local_size=local_size)
+    def __init__(self, img_folder, ann_file, args, transforms, return_masks, cache_mode=False, local_rank=0, local_size=1):
+        super(CocoDetection, self).__init__(img_folder, ann_file,
+                                            cache_mode=cache_mode, local_rank=local_rank, local_size=local_size)
         self._transforms = transforms
-        self._full_dataset = full_dataset
         self.prepare = ConvertCocoPolysToMask(return_masks)
         self.set_epoch(0)
 
@@ -96,29 +99,25 @@ class CocoDetection(TvCocoDetection):
         return len(self.act_ids)
 
     def set_epoch(self, epoch):
-        ssize = 1 if self._full_dataset else 10
-        s, b = len(self.ids)//ssize, epoch%ssize
+        s, b = len(self.ids)//10, epoch%10
         self.act_ids = list(range(b*s, (b+1)*s))
         self.current_epoch = epoch
 
     def step_epoch(self):
         # one epoch finishes.
+        print("Dataset: epoch {} finishes".format(self.current_epoch))
         self.set_epoch(self.current_epoch + 1)
-    @staticmethod
-    def collate_fn(batch):
-        """Forces collate a batch 1 element at a time"""
-        assert len(batch) == 1, "Batch size must be 1"
-        return batch[0]
 
 
-    def __getitem__(self, idx, allow_fails=3):
+    def __getitem__(self, idx, failed=False):
         idx = self.act_ids[idx % len(self.act_ids)]
         img, target = super(CocoDetection, self).__getitem__(idx)
         image_id = self.ids[idx]
         target = {'image_id': image_id, 'annotations': target}
         img, target = self.prepare(img, target)
         if img is None: # image has no valid BB
-            return self.__getitem__(idx-1, allow_fails=allow_fails)
+            if failed:print('errorr')
+            return self.__getitem__(idx-1, failed=True)
         if self._transforms is not None:
             images, targets = self._transforms([img], [target])
 
@@ -128,13 +127,10 @@ class CocoDetection(TvCocoDetection):
             gt_instances.append(gt_instances_i)
 
         if any([ t['boxes'].shape[0]==0 for t in targets ]):
-            if allow_fails==0: idx = idx+53
+            if failed: idx = idx+53
             return self.__getitem__(idx, True)
 
         exemplar = self.get_exemplar(images[0], targets[0])
-        if len(exemplar)==0:
-            if allow_fails: return self.__getitem__(idx-2, allow_fails=allow_fails-1)
-            else:          raise Exception('No exemplar found')
 
         return {
             'imgs': images,
@@ -151,16 +147,25 @@ class CocoDetection(TvCocoDetection):
         gt_instances.obj_ids = targets['obj_ids']
         return gt_instances
 
-    def get_exemplar(self,img,target):
-        exemplars = []
-        for bb in target['boxes']:
-            bb = bb.clone()
-            bb = (bb.view(2,2) * torch.tensor([img.shape[2],img.shape[1]]).view(1,2)).flatten()  # coords in img
-            bb = torch.cat((bb[:2]-bb[2:]/2, bb[:2]+bb[2:]/2)).int()               # x1y1x2y2
-            patch = img[:, bb[1]:bb[3], bb[0]:bb[2]]
-            exemplars.append(patch)
-        exemplars = [x for x in exemplars if max(*x.shape[1:])>32 and max(*x.shape[1:])/(min(*x.shape[1:])+0.02)<6]
-        return exemplars
+    def get_exemplar(self,img,target, p=0):
+        bbnorm = target['boxes'][p].clone()
+        bbnorm = bbnorm.clamp(min=0)
+        bb = (bbnorm.view(2,2) * torch.tensor([img.shape[2],img.shape[1]]).view(1,2)).flatten()  # coords in img
+        bb = torch.cat((bb[:2]-bb[2:]/2, bb[:2]+bb[2:]/2)).int()               # x1y1x2y2
+        crop = img[:, bb[1]:bb[3], bb[0]:bb[2]]
+
+        # check goodness of patch
+        min_dim = torch.tensor([min(*crop.shape)],dtype=float)
+        if min_dim==0:
+            if len(target['boxes'])==p+1:
+                # emergence
+                crop = img[:, bb[1]:bb[1]+4, bb[0]:bb[0]+4]
+            elif (max(crop.shape[1:])+1e-7)/(min(crop.shape[1:])+1e-8)>5:
+                # get next box in case of errors
+                return self.get_exemplar(img, target, p+1)
+        return [crop]
+
+
 
 
 def convert_coco_poly_to_mask(segmentations, height, width):
@@ -232,9 +237,24 @@ class ConvertCocoPolysToMask(object):
         target = {}
         target["boxes"] = boxes
         target["labels"] = torch.zeros_like(classes)
-        target["obj_ids"] = torch.arange(len(target["boxes"])).long()
         if self.return_masks:
             target["masks"] = masks
+        target["image_id"] = image_id
+        if keypoints is not None:
+            target["keypoints"] = keypoints
+
+        # for conversion to coco api
+        area = torch.tensor([obj["area"] for obj in anno])
+        iscrowd = torch.tensor([obj["iscrowd"] if "iscrowd" in obj else 0 for obj in anno])
+        target["area"] = area[keep]
+        target["scores"] = torch.ones_like(area[keep])
+        target["obj_ids"] = torch.arange(len(target['scores'])).long()
+        target["iscrowd"] = iscrowd[keep]
+
+        target["orig_size"] = torch.as_tensor([int(h), int(w)])
+        target["size"] = torch.as_tensor([int(h), int(w)])
+
+
 
         return image, target
 
@@ -274,7 +294,7 @@ def make_coco_transforms(image_set, args):
     raise ValueError(f'unknown {image_set}')
 
 
-def build(image_set, args, full_dataset=False):
+def build(image_set, args):
     root = Path(args.coco_path)
     assert root.exists(), f'provided COCO path {root} does not exist'
     mode = 'instances'
@@ -284,6 +304,6 @@ def build(image_set, args, full_dataset=False):
     }
 
     img_folder, ann_file = PATHS[image_set]
-    dataset = CocoDetection(img_folder, ann_file, args, transforms=T.make_coco_transforms(args, image_set), 
-                            return_masks=False, full_dataset=full_dataset,  cache_mode=False)
+    dataset = CocoDetection(img_folder, ann_file, args, transforms=T.make_imgdataset_transforms(args, image_set, False), return_masks=args.masks,
+                            cache_mode=args.cache_mode, local_rank=get_local_rank(), local_size=get_local_size())
     return dataset

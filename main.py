@@ -8,7 +8,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # ------------------------------------------------------------------------
 
-import argparse
 import datetime
 import random
 import time
@@ -22,10 +21,10 @@ from torch.utils.data import DataLoader
 from util.tool import load_model
 import util.misc as utils
 import datasets.samplers as samplers
-from datasets import build_dataset
+from datasets import get_dataset
 from engine import train_one_epoch_mot
 from models import build_model
-from configs.defaults import get_args_parser
+from configs.defaults import get_args
 
 
 def main(args):
@@ -49,7 +48,7 @@ def main(args):
     print('\033[96m', json.dumps(vars(args), indent=2), '\033[0m')
     print('Number of params:', n_parameters)
 
-    dataset_train = build_dataset(image_set='train', args=args)
+    dataset_train = get_dataset('aggregate', 'train', args=args)
 
     if args.distributed:
         if args.cache_mode:
@@ -175,8 +174,5 @@ def main(args):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser('Deformable DETR training and evaluation script', parents=[get_args_parser()])
-    args = parser.parse_args()
-    if args.output_dir:
-        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    args = get_args()
     main(args)

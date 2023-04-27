@@ -7,7 +7,7 @@ import torch
 import torchvision.transforms.functional as F
 from torch.utils.data import Dataset
 
-from ._transforms import make_synth_transforms
+from .transforms import make_imgdataset_transforms
 from models.structures import Instances
 
 
@@ -177,7 +177,7 @@ class FSCDataset(Dataset):
 def build(image_set, args):
     root = pathlib.Path(args.fscd_path)
     assert root.exists(), f'provided FSCD path {root} does not exist'
-    transform = make_synth_transforms(args, image_set)
+    transform = make_imgdataset_transforms(args, image_set)
     
     dataset = FSCDataset(args, image_set, transform)
 

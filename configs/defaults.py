@@ -1,16 +1,41 @@
 import argparse
 import numpy as np
+from pathlib import Path
+import json
+
+DEFAULT_FILES_CONF = ['configs/_general.json', 'configs/m.original.json']
+DATASET_PHASES = str({0:(0,.1,1),3:(0.04,.3,.1), }) # coco,synth,fscd
+
+def get_args():
+    parser = argparse.ArgumentParser('Deformable DETR training and evaluation script', parents=[get_args_parser()])
+    args = parser.parse_args()
+    if args.output_dir:
+        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    for conf_file in args.conf_files:
+        args = merge_args(args, conf_file)
+    args.phases = eval(args.phases)
+    return args
+
+def merge_args(args, conf_file):
+    with open(conf_file, 'r') as f:
+        conf_args = argparse.Namespace(**json.load(f))
+    for k, v in conf_args.__dict__.items():
+        if v is not None:
+            setattr(args, k, v)
+    return args
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Deformable DETR Detector', add_help=False)
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--meta_arch', default='deformable_detr', type=str)
+    parser.add_argument('--conf_files',  default=DEFAULT_FILES_CONF, type=str, nargs='+')
+    parser.add_argument('--phases',  default=DATASET_PHASES, type=str)
 
-    parser.add_argument('--gmot_path', default='/data/Dataset/mot', type=str)
-    parser.add_argument('--fscd_path', default='/data/Dataset/mot', type=str)
-    parser.add_argument('--synth_path', default='/data/Dataset/mot', type=str)
-    parser.add_argument('--dance_path', default='/data/Dataset/mot', type=str)
-    parser.add_argument('--coco_path', default='/data/workspace/detectron2/datasets/coco/', type=str)
+    parser.add_argument('--coco_path', default='/data/datasets/coco', type=str)
+    parser.add_argument('--fscd_path', default='/data/datasets/FSC147', type=str)
+    parser.add_argument('--synth_path', default='/data/datasets/synthdata', type=str)
+    parser.add_argument('--gmot_path', default='/data/datasets/GMOT', type=str)
+    parser.add_argument('--dance_path', default='/data/datasets/mot', type=str)
     
     parser.add_argument('--prob_detect', default=0.2, type=float)
     parser.add_argument('--extract_exe_from_img', action='store_true')
@@ -53,6 +78,7 @@ def get_args_parser():
 
     parser.add_argument('--sgd', action='store_true')
     parser.add_argument('--small_dataset', action='store_true')
+    parser.add_argument('--fast', action='store_true')
 
     # Variants of Deformable DETR
     parser.add_argument('--with_box_refine', default=False, action='store_true')
@@ -145,7 +171,7 @@ def get_args_parser():
                         help='start epoch')
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--vis', action='store_true')
-    parser.add_argument('--num_workers', default=2, type=int)
+    parser.add_argument('--num_workers', default=6, type=int)
     parser.add_argument('--pretrained', default=None, help='resume from checkpoint')
     parser.add_argument('--cache_mode', default=False, action='store_true', help='whether to cache images on memory')
 
@@ -163,8 +189,8 @@ def get_args_parser():
     parser.add_argument('--merger_dropout', type=float, default=0.1)
     parser.add_argument('--update_query_pos', action='store_true')
 
-    parser.add_argument('--sampler_steps', type=int, nargs='*')
-    parser.add_argument('--sampler_lengths', type=int, nargs='*')
+    parser.add_argument('--sampler_steps', type=int)
+    parser.add_argument('--sampler_lengths', type=int)
     parser.add_argument('--exp_name', default='submit', type=str)
     parser.add_argument('--memory_bank_score_thresh', type=float, default=0.)
     parser.add_argument('--memory_bank_len', type=int, default=4)

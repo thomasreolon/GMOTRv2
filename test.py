@@ -101,7 +101,7 @@ def load_gmot(split, args):
 
 
 def load_fscd(split, args):
-    args.sampler_lengths[0] = 20
+    args.sampler_lengths = 20
     args.small_ds = True
     ds = build_fscd(split, args)
 

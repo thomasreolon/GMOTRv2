@@ -4,3 +4,4 @@ opencv-python
 motmetrics
 pycocotools
 yacs
+seaborn
