@@ -64,42 +64,28 @@ def make_coco_transforms(args, image_set):
             MotNormalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
             MOTCleanGT(),
         ])
+    
+def make_fscd_transforms(args, image_set):
+    scales = [540, 608]#, 726, 1021, 962, 1080]
+    if image_set == 'train':
+        return MotCompose([
+            MotRandomHorizontalFlip(),
+            MotRandomResize(scales, max_size=1920),
+            MotRandomShift(args.sampler_lengths),
+            MOTHSV(),
+            MotToTensor(),
+            MotNormalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            MOTCleanGT(),
+        ])
+    else:
+        return MotCompose([
+            MotRandomShift(args.sampler_lengths, test=True),
+            MotToTensor(),
+            MotNormalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            MOTCleanGT(),
+        ])
 
 
-# def make_imgdataset_transforms(args, image_set, use_moving_crop=True):
-#     normalize = MotCompose([
-#         MotToTensor(),
-#         MotNormalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-#     ])
-#     scales = [608, 640, 672, 704, 736, 768, 800, 832, 864]
-
-#     if image_set == 'train':
-#         if use_moving_crop:
-#             return MotCompose([
-#                 MotRandomHorizontalFlip(),
-#                 MotRandomResize(scales, max_size=1555),
-#                 MotRandomShiftExtender(1,args.sampler_lengths),
-#                 MotMovingRandomCrop(),
-#                 MOTHSV(),
-#                 normalize,  # also scales from HW to [01]
-#                 MOTCleanGT(),
-#             ])
-#         else:
-#             return MotCompose([
-#                 MotRandomHorizontalFlip(),
-#                 MotRandomResize(scales, max_size=1555),
-#                 MotRandomShiftExtender(1,args.sampler_lengths),
-#                 MOTHSV(),
-#                 normalize,  # also scales from HW to [01]
-#                 MOTCleanGT(),
-#             ])
-
-#     else:
-#         return MotCompose([
-#             MotRandomShiftExtender(1,args.sampler_lengths),
-#             MotRandomResize([800], max_size=1333),
-#             normalize,
-#         ])
 
 class MotCopyPaste():
     def __call__(self, imgs: list, targets: list):

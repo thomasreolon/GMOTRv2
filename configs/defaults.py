@@ -5,25 +5,7 @@ import json
 
 DEFAULT_FILES_CONF = ['configs/_general.json', 'configs/m.original.json']
 DATASET_PHASES = str({0:(0,.1,1),15:(0.04,.3,.1),100:(0.1,0,0),350:(0.04,1,1)}) # coco,synth,fscd
-DATASET_PHASES = str({0:(0,0,1)}) # coco,synth,fscd
 
-def get_args():
-    parser = argparse.ArgumentParser('Deformable DETR training and evaluation script', parents=[get_args_parser()])
-    args = parser.parse_args()
-    if args.output_dir:
-        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-    for conf_file in args.conf_files:
-        args = merge_args(args, conf_file)
-    args.phases = eval(args.phases)
-    return args
-
-def merge_args(args, conf_file):
-    with open(conf_file, 'r') as f:
-        conf_args = argparse.Namespace(**json.load(f))
-    for k, v in conf_args.__dict__.items():
-        if v is not None:
-            setattr(args, k, v)
-    return args
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Deformable DETR Detector', add_help=False)
@@ -170,7 +152,7 @@ def get_args_parser():
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N', help='start epoch')
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--vis', action='store_true')
-    parser.add_argument('--num_workers', default=0, type=int)
+    parser.add_argument('--num_workers', default=2, type=int)
     parser.add_argument('--pretrained', default=None, help='resume from checkpoint')
     parser.add_argument('--cache_mode', default=False, action='store_true', help='whether to cache images on memory')
 
@@ -199,3 +181,20 @@ def get_args_parser():
     parser.add_argument('--query_denoise', type=float, default=0.)
     return parser
 
+def get_args():
+    parser = argparse.ArgumentParser('Deformable DETR training and evaluation script', parents=[get_args_parser()])
+    args = parser.parse_args()
+    if args.output_dir:
+        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    for conf_file in args.conf_files:
+        args = merge_args(args, conf_file)
+    args.phases = eval(args.phases)
+    return args
+
+def merge_args(args, conf_file):
+    with open(conf_file, 'r') as f:
+        conf_args = argparse.Namespace(**json.load(f))
+    for k, v in conf_args.__dict__.items():
+        if v is not None:
+            setattr(args, k, v)
+    return args

@@ -17,5 +17,6 @@
 "with_box_refine":true,
 "query_interaction_layer":"QIMv2",
 
+"num_workers":0,
 "resume":"outputs/checkpoint_deformable_detr_catexe.pth"
 }
