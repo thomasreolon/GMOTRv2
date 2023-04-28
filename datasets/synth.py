@@ -130,6 +130,7 @@ def load_files(dataset_path, num_frames_per_batch, fast=False):
 
 def targets_to_instances(targets: dict, img_shape) -> Instances:
     gt_instances = Instances(tuple(img_shape))
+    print('ok')
     gt_instances.boxes = targets['boxes']
     gt_instances.labels = targets['labels']
     gt_instances.obj_ids = targets['obj_ids']

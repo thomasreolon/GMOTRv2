@@ -26,6 +26,7 @@ from engine import train_one_epoch_mot
 from models import build_model
 from configs.defaults import get_args
 
+import gc
 
 def main(args):
     utils.init_distributed_mode(args)

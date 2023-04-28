@@ -738,7 +738,7 @@ class MOTR(nn.Module):
             'count_loss':[],
         }
         keys = list(self._generate_empty_tracks()._fields.keys())
-        if self.args.debug and np.random.rand(1)>.7:
+        if self.args.debug and np.random.rand(1)>.99:
             self.show_frame = 5 # create visualization for 5 frames
         else : self.show_frame = 0
         for frame_index, (frame, gt) in enumerate(zip(frames, data['gt_instances'])):

@@ -4,7 +4,8 @@ from pathlib import Path
 import json
 
 DEFAULT_FILES_CONF = ['configs/_general.json', 'configs/m.original.json']
-DATASET_PHASES = str({0:(0,.1,1),3:(0.04,.3,.1), }) # coco,synth,fscd
+DATASET_PHASES = str({0:(0,.1,1),15:(0.04,.3,.1),100:(0.1,0,0),350:(0.04,1,1)}) # coco,synth,fscd
+DATASET_PHASES = str({0:(0,0,1)}) # coco,synth,fscd
 
 def get_args():
     parser = argparse.ArgumentParser('Deformable DETR training and evaluation script', parents=[get_args_parser()])
@@ -163,15 +164,13 @@ def get_args_parser():
     parser.add_argument('--coco_panoptic_path', type=str)
     parser.add_argument('--remove_difficult', action='store_true')
 
-    parser.add_argument('--device', default='cuda',
-                        help='device to use for training / testing')
+    parser.add_argument('--device', default='cuda', help='device to use for training / testing')
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--resume', default='', help='resume from checkpoint')
-    parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
-                        help='start epoch')
+    parser.add_argument('--start_epoch', default=0, type=int, metavar='N', help='start epoch')
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--vis', action='store_true')
-    parser.add_argument('--num_workers', default=6, type=int)
+    parser.add_argument('--num_workers', default=0, type=int)
     parser.add_argument('--pretrained', default=None, help='resume from checkpoint')
     parser.add_argument('--cache_mode', default=False, action='store_true', help='whether to cache images on memory')
 
@@ -180,8 +179,7 @@ def get_args_parser():
     parser.add_argument('--input_video', default='figs/demo.mp4', type=str)
     parser.add_argument('--img_path', default='data/valid/JPEGImages/')
 
-    parser.add_argument('--query_interaction_layer', default='QIM', type=str,
-                        help="")
+    parser.add_argument('--query_interaction_layer', default='QIM', type=str, help="")
     parser.add_argument('--sample_mode', type=str, default='fixed_interval')
     parser.add_argument('--sample_interval', type=int, default=1)
     parser.add_argument('--random_drop', type=float, default=0)

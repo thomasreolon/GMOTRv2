@@ -39,18 +39,9 @@ class TvCocoDetection(VisionDataset):
         from pycocotools.coco import COCO
         self.coco = COCO(annFile)
         self.ids = list(sorted(self.coco.imgs.keys()))
-        self.cache_mode = cache_mode
+        self.cache_mode = False
         self.local_rank = local_rank
         self.local_size = local_size
-
-    def cache_images(self):
-        self.cache = {}
-        for index, img_id in zip(tqdm.trange(len(self.ids)), self.ids):
-            if index % self.local_size != self.local_rank:
-                continue
-            path = self.coco.loadImgs(img_id)[0]['file_name']
-            with open(os.path.join(self.root, path), 'rb') as f:
-                self.cache[path] = f.read()
 
     def get_image(self, path):
         if self.cache_mode:
@@ -238,40 +229,6 @@ class ConvertCocoPolysToMask(object):
 
         return image, target
 
-
-
-def make_coco_transforms(image_set, args):
-
-    normalize = T.Compose([
-        T.ToTensor(),
-        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-    ])
-
-    scales = [480, 512, 544, 576, 608, 640, 672, 704, 736, 768, 800]
-
-    if image_set == 'train':
-        return T.Compose([
-            T.RandomHorizontalFlip(),
-            T.MotRandomShiftExtender(args.sample_interval,args.sampler_lengths),
-            T.RandomSelect(
-                T.RandomResize(scales, max_size=1333),
-                T.Compose([
-                    T.RandomResize([400, 500, 600]),
-                    T.RandomSizeCrop(384, 600),
-                    T.RandomResize(scales, max_size=1333),
-                ])
-            ),
-            normalize,
-        ])
-
-    if image_set == 'val':
-        return T.Compose([
-            T.MotRandomShiftExtender(args.sample_interval,args.sampler_lengths),
-            T.RandomResize([800], max_size=1333),
-            normalize,
-        ])
-
-    raise ValueError(f'unknown {image_set}')
 
 
 def build(image_set, args, full_dataset=False):

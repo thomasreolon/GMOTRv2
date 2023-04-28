@@ -10,7 +10,7 @@ def build(split, args):
     return AggregateDataset(args, split)
 
 class AggregateDataset(Dataset):
-    def __init__(self, args, split, phases=None, len=2000):
+    def __init__(self, args, split, phases=None, len=400):
         self.args = args
         self.phases = args.phases if phases is None else phases
         self.datasets = []
@@ -63,8 +63,8 @@ class AggregateDataset(Dataset):
             # Return
             return data
         except Exception as e:
+            print('--------------------------> Error:\n', e)
             if fail>0:
-                print('err', e)
                 return self.__getitem__(idx+1, fail=fail-1)
             else:
                 raise e
